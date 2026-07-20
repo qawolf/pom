@@ -15,11 +15,7 @@
     "no-restricted-imports": [
       "error",
       {
-        "patterns": [
-          "@qawolf/playground-*",
-          "@qawolf/runner-*",
-          "@qawolf/pom"
-        ]
+        "patterns": ["@qawolf/playground-*", "@qawolf/runner-*", "@qawolf/pom"]
       }
     ]
   },
