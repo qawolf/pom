@@ -7,11 +7,8 @@ import {
   getRegisteredRouteInterceptors,
 } from "./pageHookCollection.js";
 import type { PopupHandlerDef, RouteInterceptorDef } from "./pageHooks.js";
-import {
-  type PomModuleLoader,
-  createPage,
-  registerPage,
-} from "./pageRegistry.js";
+import { createPage, registerPage } from "./pageRegistry.js";
+import type { PomModuleLoader } from "./pageRegistry.js";
 
 // The registry is module-global state with no reset (matching how a
 // workspace uses it: one registration pass at import time), so every test

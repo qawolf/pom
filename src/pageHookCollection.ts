@@ -11,11 +11,11 @@ import type { Page } from "playwright";
 
 import type { PopupHandlerDef, RouteInterceptorDef } from "./pageHooks.js";
 import {
-  type PomClass,
   classDeclaresPageHooks,
   entries,
   loadPageClass,
 } from "./pageRegistry.js";
+import type { PomClass } from "./pageRegistry.js";
 
 async function resolveHookBearingClasses(): Promise<
   { cls: PomClass; name: string }[]
