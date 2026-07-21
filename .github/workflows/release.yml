@@ -16,6 +16,7 @@ concurrency:
 
 permissions:
   contents: write # create tags and GitHub Releases
+  id-token: write # OIDC identity for npm trusted publishing (no NPM_TOKEN needed)
 
 jobs:
   release:
@@ -31,6 +32,10 @@ jobs:
           cache: npm
           registry-url: "https://registry.npmjs.org"
 
+      # Trusted publishing (OIDC) requires npm >= 11.5.1; Node 22 ships with npm 10.
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@latest
+
       - run: npm ci
 
       - name: Build
@@ -41,8 +46,6 @@ jobs:
 
       - name: Publish to npm if version bumped
         id: publish
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: ./scripts/publish.sh
 
       - name: Tag and create GitHub Release

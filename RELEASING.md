@@ -36,10 +36,13 @@ last tag. To improve them, write clear PR titles and use the
 [GitHub release-notes categories](https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes)
 via labels if you want grouping.
 
-## One-time setup
+## Publishing auth (no token)
 
-- **`NPM_TOKEN`** repository secret — an npm **automation** token for an account
-  with publish rights to the `@qawolf` scope. Add it under
-  _Settings → Secrets and variables → Actions_.
-- No secret is needed for the GitHub Release step; it uses the built-in
-  `GITHUB_TOKEN` (the workflow grants it `contents: write`).
+Publishing uses **npm trusted publishing (OIDC)** — there is no `NPM_TOKEN`
+secret. npm is configured to trust this repo's `release.yml` workflow, which
+authenticates via GitHub's OIDC identity (`id-token: write`). This also attaches
+build provenance automatically. The GitHub Release step uses the built-in
+`GITHUB_TOKEN` (`contents: write`); no secret is needed there either.
+
+If publishing ever needs to be re-authorized, manage the trusted publisher on
+the package's npmjs settings page.
