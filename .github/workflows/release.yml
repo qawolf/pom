@@ -1,29 +1,27 @@
 name: Release
 
-# Version-driven publishing: this workflow publishes to npm only when the
-# version in package.json is higher than the version already on the registry.
-# To cut a release, bump the version in a PR and merge it to main.
+# Publishing is driven by GitHub Releases: cutting a Release (tag vX.Y.Z) is
+# what kicks off the npm publish. Pushing to main never publishes.
 # See RELEASING.md.
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:
+  release:
+    types: [published]
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 permissions:
-  contents: write # create tags and GitHub Releases
+  contents: read
 
 jobs:
-  release:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # full history so release notes can diff since the last tag
+          ref: ${{ github.event.release.tag_name }}
 
       - uses: actions/setup-node@v4
         with:
@@ -33,24 +31,18 @@ jobs:
 
       - run: npm ci
 
+      - name: Verify package.json version matches the release tag
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: ./scripts/verify-version.sh "$RELEASE_TAG"
+
       - name: Build
         run: npm run build
 
       - name: Test
         run: npm test
 
-      - name: Publish to npm if version bumped
-        id: publish
+      - name: Publish to npm
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: ./scripts/publish.sh
-
-      - name: Tag and create GitHub Release
-        if: steps.publish.outputs.published == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tag="v${{ steps.publish.outputs.version }}"
-          git tag "$tag"
-          git push origin "$tag"
-          gh release create "$tag" --title "$tag" --generate-notes
