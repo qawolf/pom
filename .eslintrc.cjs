@@ -209,6 +209,37 @@ module.exports = {
   },
   overrides: [
     {
+      // Rules must stay portable: they can run in hosts without a filesystem,
+      // so no Node built-ins. playwright and @qawolf/flows are peer
+      // dependencies and must stay out of this path.
+      excludedFiles: ["src/eslintRules/**/*.test.{cts,ts,tsx}"],
+      files: ["src/eslintRules/**/*.{cts,ts,tsx}"],
+      rules: {
+        "import/no-nodejs-modules": "error",
+        // eslintrc replaces a rule's options rather than merging them, so the
+        // root's `@qawolf/pom` ban is restated here. The root's other patterns
+        // are not: those are not dependencies of this package, so
+        // `import/no-unresolved` already rejects them.
+        //
+        // `..` matters as much as the package names. The rest of `src/` is not
+        // written to these constraints, so one `../index.js` would pull the
+        // whole package into a rule.
+        "no-restricted-imports": [
+          "error",
+          {
+            patterns: [
+              "..",
+              "@qawolf/flows",
+              "@qawolf/flows/*",
+              "@qawolf/pom",
+              "playwright",
+              "playwright/*",
+            ],
+          },
+        ],
+      },
+    },
+    {
       // Hand-authored JS config files: allow default exports and CommonJS, and
       // keep them grouped/commented for readability rather than object-sorted.
       files: ["*.{cjs,js,mjs}", "**/*.config.{cjs,js,mjs}"],

@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./eslint-rules": {
+      "types": "./dist/eslintRules/index.d.ts",
+      "import": "./dist/eslintRules/index.js"
     }
   },
   "files": [
@@ -31,6 +35,7 @@
     "@swc/core": "^1.13.5",
     "@swc/jest": "^0.2.39",
     "@tsconfig/strictest": "^2.0.8",
+    "@types/eslint": "^8.56.12",
     "@types/jest": "^30.0.0",
     "@typescript-eslint/eslint-plugin": "^8.18.0",
     "@typescript-eslint/parser": "^8.18.0",
@@ -51,9 +56,13 @@
   },
   "peerDependencies": {
     "@qawolf/flows": "^0.1.4",
+    "eslint": ">=8.40.0",
     "playwright": "1.58.2"
   },
   "peerDependenciesMeta": {
+    "eslint": {
+      "optional": true
+    },
     "playwright": {
       "optional": true
     }
