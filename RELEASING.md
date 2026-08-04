@@ -44,5 +44,9 @@ authenticates via GitHub's OIDC identity (`id-token: write`). This also attaches
 build provenance automatically. The GitHub Release step uses the built-in
 `GITHUB_TOKEN` (`contents: write`); no secret is needed there either.
 
+Provenance ties the tarball to this repository, so npm rejects the publish with
+a 422 unless `package.json`'s `repository.url` matches
+`https://github.com/qawolf/pom`. Keep that field pointing here.
+
 If publishing ever needs to be re-authorized, manage the trusted publisher on
 the package's npmjs settings page.
