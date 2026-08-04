@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "private": false,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qawolf/pom.git"
+  },
+  "homepage": "https://docs.qawolf.com/qawolf/libraries/pom",
+  "bugs": "https://github.com/qawolf/pom/issues",
   "sideEffects": false,
   "type": "module",
   "exports": {
