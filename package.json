@@ -23,7 +23,6 @@
   "scripts": {
     "build": "rm -rf ./dist && tsc -p tsconfig.build.json",
     "lint": "eslint . --ext cjs,cts,js,jsx,mjs,ts,tsx --quiet && prettier --check .",
-    "lint:circular": "dpdm --exit-code circular:1 --no-tree --no-warning --transform --include='.*' --exclude='/(dist|node_modules)/' '**/*'",
     "lint:fix": "eslint . --ext cjs,cts,js,jsx,mjs,ts,tsx --fix --quiet && prettier --log-level=warn --write .",
     "prepublishOnly": "npm run build",
     "test": "NODE_OPTIONS=\"--experimental-vm-modules\" NODE_NO_WARNINGS=1 jest",
