@@ -80,6 +80,7 @@ module.exports = {
     curly: ["error", "multi-or-nest"],
     eqeqeq: ["error", "always", { null: "ignore" }],
     "import/consistent-type-specifier-style": ["error", "prefer-top-level"],
+    "import/no-cycle": ["error", { ignoreExternal: true }],
     "import/no-duplicates": "error",
     "max-params": ["error", { max: 3 }],
     "no-constant-condition": ["error", { checkLoops: false }],

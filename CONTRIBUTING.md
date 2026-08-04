@@ -21,7 +21,6 @@ npm ci
 npm run tsc:check           # typecheck (tsc --noEmit)
 npm run lint                # eslint + prettier --check
 npm run lint:fix            # eslint --fix + prettier --write
-npm run lint:circular       # fail on circular imports
 npm test                    # run all tests
 npm run test:watch          # run tests in watch mode
 npm run build               # compile to dist/ via tsconfig.build.json
