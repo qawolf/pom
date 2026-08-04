@@ -1,8 +1,9 @@
 import type { Rule } from "eslint";
 
+import { noInlineLocatorInPageObjectRule } from "./noInlineLocatorInPageObject.js";
 import type { PomLintRule } from "./types.js";
 
-const rules: PomLintRule[] = [];
+const rules: PomLintRule[] = [noInlineLocatorInPageObjectRule];
 
 const entries = rules.map((rule) => ({
   ...rule,
