@@ -13,12 +13,13 @@ export type BaselineScreenshotFn = (
 export abstract class BasePageObject {
   protected page: Page;
 
-  protected constructor(page: Page) {
+  constructor(page: Page) {
     this.page = page;
   }
 
   /**
-   * Public factory for the page registry while keeping constructors protected.
+   * Factory used by the page registry, and by a page object constructing a
+   * sibling it imported directly.
    */
   static createFromPage<TPageObject extends BasePageObject>(
     this: new (page: Page) => TPageObject,
@@ -54,14 +55,14 @@ export abstract class BasePageObject {
   }
 
   /**
-   * Construct a sibling POM that shares this page instance.
+   * Construct a sibling POM by its registered name, sharing this page
+   * instance. Async because a lazily registered module loads on first use.
    *
-   * This is the ONLY way POMs should create other POMs — it routes through
-   * the central page registry, eliminating circular import dependencies.
-   * POMs never `import { SiblingPage }` as a value; they use
-   * `import type { SiblingPage }` for return-type annotations and call
-   * `await this.create('SiblingPage')` for runtime construction. The call
-   * is async because lazily registered POM modules load on first use.
+   * Importing the sibling and calling `SiblingPage.createFromPage(this.page)`
+   * is equally supported, and needs no registry entry and no return-type
+   * annotation — two page objects that import each other is fine. Reach for
+   * the registry when the sibling's module should stay out of this file's
+   * import graph until first use, or when a name is all you have.
    *
    * When the workspace's `register-pages.ts` augments `RegisteredPages`,
    * names in the map return their page-object type without an annotation;

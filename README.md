@@ -1,9 +1,9 @@
 # @qawolf/pom
 
 `@qawolf/pom` is a TypeScript toolkit for building Page Object Models (POMs) on
-top of Playwright: base classes for page objects, a central registry that lets
-page objects construct one another without circular imports, and automatic
-popup and route-hook installation.
+top of Playwright: base classes for page objects, a registry that constructs
+page objects by name and collects their page hooks, and automatic popup and
+route-hook installation.
 
 It is built for and maintained as part of the [QA Wolf](https://www.qawolf.com)
 platform, and it is the foundation the POMs in QA Wolf workspaces are generated
@@ -29,11 +29,13 @@ npm install @qawolf/pom
 ## Usage
 
 Define a page object by extending `BasePageObject`, keeping selectors in a
-private `locators` getter and constructing sibling page objects with
-`this.create(...)`.
+private `locators` getter. To hand off to the next page object, import it and
+build it from the current Playwright `page`.
 
 ```ts
 import { BasePageObject } from "@qawolf/pom";
+
+import { DashboardPage } from "./dashboard-page.js";
 
 export class LoginPage extends BasePageObject {
   private get locators() {
@@ -46,14 +48,20 @@ export class LoginPage extends BasePageObject {
   async signIn(email: string) {
     await this.locators.email.fill(email);
     await this.locators.submit.click();
-    return this.create("DashboardPage");
+    return DashboardPage.createFromPage(this.page);
   }
 }
 ```
 
-Register every page object once — importing the registration module for its
-side effects before constructing any page object — then build one for a
-Playwright `page`.
+`dashboard-page.js` may import `login-page.js` back, so two pages that navigate
+to each other can both expose the trip. The one shape to avoid is a page object
+that `extend`s a class in a file that imports it back — whichever of the two
+loads second throws `Cannot access 'X' before initialization`.
+
+### Constructing by name
+
+A page object can also be built from its registered name, which keeps its
+module out of the calling file's import graph until the first construction.
 
 ```ts
 import { createPage, registerPage } from "@qawolf/pom";
@@ -62,6 +70,15 @@ registerPage("LoginPage", () => import("./pages/login-page.js"));
 
 const loginPage = await createPage("LoginPage", page);
 ```
+
+Inside a page object the same lookup is `await this.create("DashboardPage")`,
+with `import type { DashboardPage }` for the return type. Register the module
+for its side effects before constructing anything.
+
+Register a page object even when nothing constructs it by name if it declares
+`popupHandlers()` or `routeInterceptors()` — `installPageHooks()` finds those
+by walking the registry, and an unregistered page object's hooks never
+install.
 
 ## Platform integration
 

@@ -1,8 +1,14 @@
 /**
- * Page Registry — central POM construction infrastructure. Stores POM classes
- * keyed by name; `register-pages.ts` calls `registerPage`, `BasePageObject`
- * calls `createPage`, and `EntryPointPageObject.installPageHooks` calls
+ * Page Registry — POM classes stored by name. `register-pages.ts` calls
+ * `registerPage`, `BasePageObject.create` calls `createPage`, and
+ * `EntryPointPageObject.installPageHooks` calls
  * `getRegisteredPopupHandlers` / `getRegisteredRouteInterceptors`.
+ *
+ * Constructing by name is one of two options — a page object can equally
+ * import a sibling and call `createFromPage` on it. Hook installation has no
+ * such alternative: it walks the registry, so a POM that declares
+ * `popupHandlers()` or `routeInterceptors()` needs an entry here however its
+ * instances get built.
  *
  * Registration is eager (`registerPage("LoginPage", LoginPage)`) or lazy
  * (`registerPage("LoginPage", () => import("../pages/login-page.ts"))`). A
