@@ -66,11 +66,16 @@ export abstract class BasePageObject {
    * import graph until first use, or when a name is all you have.
    *
    * A workspace with no `register-pages.ts` needs no registry entry either:
-   * an unregistered name falls back to the kebab-cased module next to the file
-   * making the call — `create("SomePage")` to `./some-page.js` — which must
-   * export the class under that name. Registration always wins over the
-   * convention, and a page resolved this way contributes no page hooks, the
-   * same as it did before when the name failed to resolve at all.
+   * an unregistered name is resolved through the calling file's own imports,
+   * so `create("SomePage")` finds whatever that file imports `SomePage` from —
+   * `import type { SomePage } from "../primary/some-page.ts"` included, since
+   * the specifier is read from the source rather than the module graph. A name
+   * nothing imports falls back to the kebab-cased module beside the caller,
+   * `./some-page.js`.
+   *
+   * Registration always wins over both, and a page resolved this way
+   * contributes no page hooks, the same as it did before when the name failed
+   * to resolve at all.
    *
    * When the workspace's `register-pages.ts` augments `RegisteredPages`,
    * names in the map return their page-object type without an annotation;

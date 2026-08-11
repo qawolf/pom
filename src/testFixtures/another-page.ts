@@ -1,15 +1,15 @@
 import { BasePageObject } from "../basePageObject.js";
 
-import type { SomePage } from "./some-page.js";
+import type { ImportedPage } from "./primary/imported-page.js";
 
 /**
  * A page object as an old workspace writes one: it names its siblings instead
  * of importing them as values, and the workspace has no `register-pages.ts`.
- * `some-page.js` is imported for its type only, so nothing loads that module
- * before `create` resolves it.
+ * The imports here are type-only, so nothing loads those modules before
+ * `create` resolves them.
  */
 export class AnotherPage extends BasePageObject {
-  async createMissingSibling(): Promise<BasePageObject> {
+  async createMissingPage(): Promise<BasePageObject> {
     return this.create("NoSuchPage");
   }
 
@@ -17,7 +17,13 @@ export class AnotherPage extends BasePageObject {
     return this.create("OverridePage");
   }
 
-  async doSomething(): Promise<SomePage> {
+  /** Resolved through the import above, which points outside this directory. */
+  async goToImported(): Promise<ImportedPage> {
+    return this.create("ImportedPage");
+  }
+
+  /** Named but never imported, so only the naming convention can find it. */
+  async goToUnimported(): Promise<BasePageObject> {
     return this.create("SomePage");
   }
 }

@@ -75,12 +75,30 @@ Inside a page object the same lookup is `await this.create("DashboardPage")`,
 with `import type { DashboardPage }` for the return type. Register the module
 for its side effects before constructing anything.
 
-A name that was never registered falls back to the kebab-cased module sitting
-next to the file making the call — `this.create("DashboardPage")` resolves
-`./dashboard-page.js` — so page objects can construct siblings by name in a
-workspace with no registry at all. The module must export the class under that
-name. Registration always takes precedence, and a page resolved this way is not
-part of the registry, so its `popupHandlers()` and `routeInterceptors()` are not
+A name that was never registered is resolved through the calling file's own
+imports, so page objects can construct each other by name in a workspace with no
+registry at all:
+
+```ts
+import { BasePageObject } from "@qawolf/pom";
+
+import type { DashboardPage } from "../primary/dashboard-page.js";
+
+export class LoginPage extends BasePageObject {
+  async signIn(): Promise<DashboardPage> {
+    return this.create("DashboardPage");
+  }
+}
+```
+
+The import above is enough, including a type-only one: the specifier is read
+from the file's source, not from its runtime module graph. A name that no import
+binds falls back to the kebab-cased module beside the caller —
+`this.create("DashboardPage")` looking for `./dashboard-page.js`. Either way the
+module must export the class under that name.
+
+Registration always takes precedence, and a page resolved this way is not part
+of the registry, so its `popupHandlers()` and `routeInterceptors()` are not
 collected by `installPageHooks()`.
 
 Register a page object even when nothing constructs it by name if it declares
