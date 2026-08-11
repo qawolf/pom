@@ -1,8 +1,9 @@
 import type { Locator, Page } from "playwright";
 
+import { callerFileUrl } from "./callerModule.js";
 import type { RegisteredPages } from "./index.js";
 import type { PopupHandlerDef, RouteInterceptorDef } from "./pageHooks.js";
-import { createPage } from "./pageRegistry.js";
+import { createPageForCaller } from "./pageRegistry.js";
 
 export type BaselineScreenshotFn = (
   target: Page | Locator,
@@ -64,6 +65,13 @@ export abstract class BasePageObject {
    * the registry when the sibling's module should stay out of this file's
    * import graph until first use, or when a name is all you have.
    *
+   * A workspace with no `register-pages.ts` needs no registry entry either:
+   * an unregistered name falls back to the kebab-cased module next to the file
+   * making the call — `create("SomePage")` to `./some-page.js` — which must
+   * export the class under that name. Registration always wins over the
+   * convention, and a page resolved this way contributes no page hooks, the
+   * same as it did before when the name failed to resolve at all.
+   *
    * When the workspace's `register-pages.ts` augments `RegisteredPages`,
    * names in the map return their page-object type without an annotation;
    * other names default to `BasePageObject`, so annotate the call —
@@ -76,6 +84,8 @@ export abstract class BasePageObject {
     name: string,
   ): Promise<TPageObject>;
   protected create(name: string): Promise<BasePageObject> {
-    return createPage<BasePageObject>(name, this.page);
+    // Depth 1 is the page-object method that called `create`, whose directory
+    // is where an unregistered sibling module is looked for.
+    return createPageForCaller(name, this.page, callerFileUrl(1));
   }
 }

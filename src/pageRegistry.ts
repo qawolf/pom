@@ -20,8 +20,13 @@
 // would create a runtime cycle.
 import type { Page } from "playwright";
 
+import { callerFileUrl } from "./callerModule.js";
 import type { RegisteredPages } from "./index.js";
 import type { PopupHandlerDef, RouteInterceptorDef } from "./pageHooks.js";
+import {
+  importSiblingPageModule,
+  siblingModuleCandidates,
+} from "./siblingPageResolution.js";
 
 type RegistrablePage = {
   popupHandlers(): PopupHandlerDef[];
@@ -103,11 +108,15 @@ export function registerPage(
   };
 }
 
-function assertIsPomClass(name: string, loaded: unknown): PomClass {
+function assertIsPomClass(
+  name: string,
+  loaded: unknown,
+  source: string,
+): PomClass {
   if (isPomClass(loaded)) return loaded;
 
   throw Error(
-    `Lazy registration for page "${name}" did not resolve to a page-object class: ` +
+    `${source} did not resolve to a page-object class: ` +
       `the loaded module must export "${name}" extending BasePageObject.`,
   );
 }
@@ -149,7 +158,11 @@ export async function loadPageClass(
   entry.loading ??= entry
     .loader()
     .then((moduleNamespace) => {
-      const cls = assertIsPomClass(name, moduleNamespace[name]);
+      const cls = assertIsPomClass(
+        name,
+        moduleNamespace[name],
+        `Lazy registration for page "${name}"`,
+      );
       assertHookFlagMatchesClass(name, entry.providesPageHooks, cls);
       return cls;
     })
@@ -163,12 +176,89 @@ export async function loadPageClass(
   return entry.loading;
 }
 
-async function resolvePageClass(name: string): Promise<PomClass> {
+/**
+ * Sibling classes resolved by convention, keyed by the calling module and the
+ * page name. Kept out of `entries` so that resolving a page never registers
+ * it: registration stays the single source of truth for duplicate detection
+ * and for the page hooks that `installPageHooks` collects.
+ */
+const siblingClasses = new Map<string, Promise<PomClass>>();
+
+function unknownPageError(name: string, callerUrl: string | undefined): Error {
+  if (!callerUrl)
+    return Error(`Unknown page: ${name}. Was register-pages.ts imported?`);
+
+  const tried = siblingModuleCandidates(name, callerUrl)
+    .map((url) => `"${url.slice(url.lastIndexOf("/") + 1)}"`)
+    .join(" or ");
+
+  return Error(
+    `Unknown page: ${name}. No page is registered under that name, and no ` +
+      `${tried} module sits next to ${callerUrl}. Register the page in ` +
+      `register-pages.ts, or import the class and call ` +
+      `${name}.createFromPage(this.page).`,
+  );
+}
+
+/**
+ * Falls back to the module next to the calling page object when a name was
+ * never registered, so `this.create("SomePage")` still works in a workspace
+ * with no `register-pages.ts`.
+ */
+async function resolveSiblingPageClass(
+  name: string,
+  callerUrl: string | undefined,
+): Promise<PomClass> {
+  if (!callerUrl) throw unknownPageError(name, callerUrl);
+
+  const cacheKey = `${callerUrl}\u0000${name}`;
+  const cached = siblingClasses.get(cacheKey);
+  if (cached) return cached;
+
+  const loading = importSiblingPageModule(name, callerUrl)
+    .then((resolved) => {
+      if (!resolved) throw unknownPageError(name, callerUrl);
+
+      return assertIsPomClass(
+        name,
+        resolved.moduleNamespace[name],
+        `The module "${resolved.url}" found for page "${name}"`,
+      );
+    })
+    .catch((error: unknown) => {
+      // Same reasoning as the lazy-entry cache: a memoized rejection would
+      // poison this name for the rest of the process.
+      siblingClasses.delete(cacheKey);
+      throw error;
+    });
+
+  siblingClasses.set(cacheKey, loading);
+  return loading;
+}
+
+async function resolvePageClass(
+  name: string,
+  callerUrl: string | undefined,
+): Promise<PomClass> {
   const entry = entries[name];
-  if (!entry)
-    throw Error(`Unknown page: ${name}. Was register-pages.ts imported?`);
+  if (!entry) return resolveSiblingPageClass(name, callerUrl);
 
   return entry.kind === "eager" ? entry.cls : loadPageClass(name, entry);
+}
+
+/**
+ * Shared by `createPage` and `BasePageObject.create`, which each capture their
+ * own caller: resolving a sibling module has to start from the page object's
+ * file, not from this package's.
+ */
+export async function createPageForCaller(
+  name: string,
+  page: Page,
+  callerUrl: string | undefined,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- returns whichever page object the name resolves to
+): Promise<any> {
+  const cls = await resolvePageClass(name, callerUrl);
+  return cls.createFromPage(page);
 }
 
 export async function createPage<TName extends keyof RegisteredPages & string>(
@@ -181,6 +271,5 @@ export async function createPage<TPageObject = RegistrablePage>(
 ): Promise<TPageObject>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- implementation of the overloads above
 export async function createPage(name: string, page: Page): Promise<any> {
-  const cls = await resolvePageClass(name);
-  return cls.createFromPage(page);
+  return createPageForCaller(name, page, callerFileUrl(1));
 }
