@@ -83,8 +83,10 @@ binds falls back to the kebab-cased module beside the caller —
 `this.create("DashboardPage")` looking for `./dashboard-page.js`. Either way the
 module must export the class under that name.
 
-Outside a page object, `createPage("DashboardPage", page)` does the same lookup
-against its own caller.
+`create` is deliberately `protected` and has no flow-facing counterpart: flow
+code never holds a Playwright `Page`, so it cannot construct page objects
+directly. A flow gets its first POM from an entry point's static `create()`,
+and every subsequent one from methods on POMs it already has.
 
 ### Page hooks
 
@@ -140,9 +142,9 @@ Wolf run, including:
 | `QAWOLF_RUN_ID`, `QAWOLF_SUITE_ID`, `QAWOLF_TEAM_ID`, `QAWOLF_WORKFLOW_ID` | Run metadata attached to cleanup failure reports.               |
 
 The core building blocks — `BasePageObject`, `SubPageObject`, name-based
-construction (`createPage` / `this.create`), popup and route hooks, and the
-network monitor — do not require the QA Wolf platform and can be used with any
-Playwright project.
+construction (`this.create`), popup and route hooks, and the network monitor —
+do not require the QA Wolf platform and can be used with any Playwright
+project.
 
 ## License
 

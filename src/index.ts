@@ -1,4 +1,9 @@
-export { type BaselineScreenshotFn, BasePageObject } from "./basePageObject.js";
+export {
+  type BaselineScreenshotFn,
+  // `PomClass` is public because `PageSetupOptions.pageHooks` takes these.
+  type PomClass,
+  BasePageObject,
+} from "./basePageObject.js";
 export {
   type ReportCleanupFailedParams,
   reportCleanupFailed,
@@ -14,11 +19,6 @@ export type {
   PopupHandlerDef,
   RouteInterceptorDef,
 } from "./pageHooks.js";
-export {
-  // `PomClass` is public because `PageSetupOptions.pageHooks` takes these.
-  type PomClass,
-  createPage,
-} from "./pageResolution.js";
 export { callPlatformAPI } from "./platformClient.js";
 export { PopupHandler } from "./popupHandler.js";
 export type { SequencePromise } from "./sequence.js";

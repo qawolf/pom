@@ -3,8 +3,8 @@ import type { Page } from "playwright";
 import { launch } from "@qawolf/flows/web";
 
 import { BasePageObject } from "./basePageObject.js";
+import type { PomClass, RegistrablePage } from "./basePageObject.js";
 import type { PageSetupOptions } from "./pageHooks.js";
-import type { PomClass, RegistrablePage } from "./pageResolution.js";
 import { buildPopupShieldInitScript } from "./popupShieldInitScript.js";
 
 /**
