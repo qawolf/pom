@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "@jest/globals";
+import { describe, expect, it } from "@jest/globals";
 import type { Locator, Page, Route } from "playwright";
 
 import { BasePageObject } from "./basePageObject.js";
@@ -8,7 +8,6 @@ import type {
   PopupHandlerDef,
   RouteInterceptorDef,
 } from "./pageHooks.js";
-import { entries, registerPage } from "./pageRegistry.js";
 
 /**
  * Records what `installPageHooks` installed. The shield path and the
@@ -95,14 +94,8 @@ class EntryWithRoutes extends TestEntryPoint {
 
 class PlainEntry extends TestEntryPoint {}
 
-// The registry is module-global with no public reset, so each test starts from
-// an empty one rather than inheriting registrations from the test above it.
-beforeEach(() => {
-  for (const name of Object.keys(entries)) delete entries[name];
-});
-
 describe("[CI] installPageHooks — entry point contributes its own hooks", () => {
-  it("installs hooks the entry point declares while unregistered", async () => {
+  it("installs hooks the entry point declares", async () => {
     const { initScripts, page } = makeFakePage();
 
     await new EntryWithPopups(page).install();
@@ -113,14 +106,14 @@ describe("[CI] installPageHooks — entry point contributes its own hooks", () =
     expect(initScripts[0]).toContain("cookieconsent");
   });
 
-  it("installs a registered entry point's own hooks exactly once", async () => {
-    // The compatibility case: a workspace that already registers its entry
-    // point reaches the same class by both routes. Contributing twice repeats
-    // every hook name, which `assertUniqueHookNames` rejects.
-    registerPage("EntryWithPopups", EntryWithPopups);
+  it("installs the entry point's own hooks exactly once when it also names itself", async () => {
+    // Contributing twice repeats every hook name, which
+    // `assertUniqueHookNames` rejects — identity dedupe is what prevents it.
     const { initScripts, page } = makeFakePage();
 
-    await expect(new EntryWithPopups(page).install()).resolves.toBeUndefined();
+    await expect(
+      new EntryWithPopups(page).install({ pageHooks: [EntryWithPopups] }),
+    ).resolves.toBeUndefined();
 
     expect(initScripts).toHaveLength(1);
   });
@@ -189,12 +182,13 @@ describe("[CI] installPageHooks — explicit pageHooks contributors", () => {
     expect(locatorHandlerTriggers).toHaveLength(0);
   });
 
-  it("contributes once for a class that is also registered", async () => {
-    registerPage("PendoTourPage", PendoTourPage);
+  it("contributes once for a class listed twice", async () => {
     const { locatorHandlerTriggers, page } = makeFakePage();
 
     await expect(
-      new PlainEntry(page).install({ pageHooks: [PendoTourPage] }),
+      new PlainEntry(page).install({
+        pageHooks: [PendoTourPage, PendoTourPage],
+      }),
     ).resolves.toBeUndefined();
 
     expect(locatorHandlerTriggers).toHaveLength(1);
@@ -263,24 +257,27 @@ describe("[CI] installPageHooks — explicit pageHooks contributors", () => {
     ).rejects.toThrow('Duplicate popup hook name "cookie-banner"');
   });
 
-  it("merges registry, entry point, and contributed hooks together", async () => {
-    registerPage("RouteOnlyPage", RouteOnlyPage);
+  it("merges the entry point's own hooks with several contributors", async () => {
     const { initScripts, locatorHandlerTriggers, page, routes } =
       makeFakePage();
 
-    await new EntryWithPopups(page).install({ pageHooks: [PendoTourPage] });
+    await new EntryWithPopups(page).install({
+      pageHooks: [PendoTourPage, RouteOnlyPage],
+    });
 
     expect(initScripts[0]).toContain("cookieconsent"); // entry point
     expect(locatorHandlerTriggers).toEqual([{ name: "pendo-tour" }]); // contributed
-    expect(routes).toEqual(["**/analytics/**"]); // registry
+    expect(routes).toEqual(["**/analytics/**"]); // contributed
   });
 
-  it("behaves identically to registry-only when pageHooks is omitted", async () => {
-    registerPage("PendoTourPage", PendoTourPage);
-    const { locatorHandlerTriggers, page } = makeFakePage();
+  it("installs nothing when pageHooks is omitted and the entry declares none", async () => {
+    const { initScripts, locatorHandlerTriggers, page, routes } =
+      makeFakePage();
 
     await new PlainEntry(page).install({});
 
-    expect(locatorHandlerTriggers).toEqual([{ name: "pendo-tour" }]);
+    expect(initScripts).toHaveLength(0);
+    expect(locatorHandlerTriggers).toHaveLength(0);
+    expect(routes).toHaveLength(0);
   });
 });

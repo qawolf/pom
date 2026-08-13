@@ -3,14 +3,19 @@ import type { Page } from "playwright";
 import { launch } from "@qawolf/flows/web";
 
 import { BasePageObject } from "./basePageObject.js";
-import {
-  getRegisteredPopupHandlers,
-  getRegisteredRouteInterceptors,
-} from "./pageHookCollection.js";
-import type { HookGroup } from "./pageHookCollection.js";
 import type { PageSetupOptions } from "./pageHooks.js";
-import type { PomClass, RegistrablePage } from "./pageRegistry.js";
+import type { PomClass, RegistrablePage } from "./pageResolution.js";
 import { buildPopupShieldInitScript } from "./popupShieldInitScript.js";
+
+/**
+ * A class's hook defs, tagged with the class itself so that a class reached
+ * both as the entry point and through `pageHooks` contributes only once.
+ */
+type HookGroup<TDef> = {
+  className: string;
+  cls: PomClass;
+  defs: TDef[];
+};
 
 /**
  * Playwright applies HTTP auth when `httpCredentials` is set. Passing empty
@@ -94,28 +99,25 @@ export abstract class EntryPointPageObject extends BasePageObject {
   /**
    * Install all page hooks. Call before goto().
    *
-   * Hook defs come from three places: every POM registered in the page
-   * registry that overrode `popupHandlers()` / `routeInterceptors()`, this
-   * entry point's own overrides, and any POM class passed as
-   * `options.pageHooks`. A workspace can therefore install hooks with no
-   * registry at all. See `pageHookCollection.ts` for the auto-detection
-   * mechanism and `collectHookGroups` for how the three are merged.
+   * Hook defs come from two places: this entry point's own
+   * `popupHandlers()` / `routeInterceptors()` overrides, and the POM classes
+   * passed as `options.pageHooks`. Both are value imports at the call site,
+   * so every hook installed on a page is traceable from the one place browser
+   * setup happens.
    */
   protected async installPageHooks(options?: PageSetupOptions): Promise<void> {
     const skipPopups = new Set(options?.allowPopups);
     const skipRoutes = new Set(options?.allowRoutes);
 
     const popupGroups = this.collectHookGroups({
-      explicit: options?.pageHooks,
+      contributors: options?.pageHooks,
       kind: "popupHandlers",
       read: (source) => source.popupHandlers(),
-      registryGroups: await getRegisteredPopupHandlers(this.page),
     });
     const routeGroups = this.collectHookGroups({
-      explicit: options?.pageHooks,
+      contributors: options?.pageHooks,
       kind: "routeInterceptors",
       read: (source) => source.routeInterceptors(),
-      registryGroups: await getRegisteredRouteInterceptors(this.page),
     });
     assertUniqueHookNames(popupGroups, "popup");
     assertUniqueHookNames(routeGroups, "route");
@@ -158,37 +160,34 @@ export abstract class EntryPointPageObject extends BasePageObject {
   }
 
   /**
-   * Hook groups from all three sources — the page registry, this entry point
-   * itself, and the classes named in `options.pageHooks` — with each class
-   * contributing exactly once however it was reached.
+   * Hook groups from both sources — this entry point itself and the classes
+   * named in `options.pageHooks` — with each class contributing exactly once
+   * however it was reached.
    *
    * Dedupe is by class identity rather than by name because contributing
    * twice is not merely wasteful: the second contribution repeats every hook
-   * name and `assertUniqueHookNames` throws. An entry point that a workspace
-   * also registers is the common case, so identity is what keeps the registry
-   * and the two registry-free routes compatible with each other.
+   * name and `assertUniqueHookNames` throws. An entry point that also names
+   * itself in `pageHooks` is the case that would otherwise break.
    *
-   * `Object.hasOwn` matches how the registry detects overrides, so a class
-   * that only inherits `popupHandlers()` contributes nothing here either.
+   * `Object.hasOwn` means a class that only inherits `popupHandlers()`
+   * contributes nothing, so a subclass must declare the override itself.
    */
   private collectHookGroups<TDef>({
-    explicit,
+    contributors,
     kind,
     read,
-    registryGroups,
   }: {
-    explicit: PomClass[] | undefined;
+    contributors: PomClass[] | undefined;
     kind: "popupHandlers" | "routeInterceptors";
     read: (source: RegistrablePage) => TDef[];
-    registryGroups: HookGroup<TDef>[];
   }): HookGroup<TDef>[] {
-    const groups = [...registryGroups];
-    const seen = new Set<PomClass>(groups.map((group) => group.cls));
+    const groups: HookGroup<TDef>[] = [];
+    const seen = new Set<PomClass>();
     // `this.constructor` is typed `Function`; at runtime it is the concrete
     // entry-point class, which carries `createFromPage` and `prototype`.
     const self = this.constructor as unknown as PomClass;
 
-    for (const cls of [self, ...(explicit ?? [])]) {
+    for (const cls of [self, ...(contributors ?? [])]) {
       if (seen.has(cls) || !Object.hasOwn(cls.prototype, kind)) continue;
       seen.add(cls);
       // `this` is already bound to the page, so only contributed classes are
