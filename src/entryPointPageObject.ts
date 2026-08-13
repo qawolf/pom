@@ -4,16 +4,17 @@ import { launch } from "@qawolf/flows/web";
 
 import { BasePageObject } from "./basePageObject.js";
 import type { PomClass, RegistrablePage } from "./basePageObject.js";
-import type { PageSetupOptions } from "./pageHooks.js";
+import type {
+  PageSetupOptions,
+  PopupHandlerDef,
+  RouteInterceptorDef,
+} from "./pageHooks.js";
 import { buildPopupShieldInitScript } from "./popupShieldInitScript.js";
 
-/**
- * A class's hook defs, tagged with the class itself so that a class reached
- * both as the entry point and through `pageHooks` contributes only once.
- */
+/** Hook defs of one kind, attributed to the declaring class's name so a
+ *  duplicate-name error can say which classes collided. */
 type HookGroup<TDef> = {
   className: string;
-  cls: PomClass;
   defs: TDef[];
 };
 
@@ -109,16 +110,9 @@ export abstract class EntryPointPageObject extends BasePageObject {
     const skipPopups = new Set(options?.allowPopups);
     const skipRoutes = new Set(options?.allowRoutes);
 
-    const popupGroups = this.collectHookGroups({
-      contributors: options?.pageHooks,
-      kind: "popupHandlers",
-      read: (source) => source.popupHandlers(),
-    });
-    const routeGroups = this.collectHookGroups({
-      contributors: options?.pageHooks,
-      kind: "routeInterceptors",
-      read: (source) => source.routeInterceptors(),
-    });
+    const { popupGroups, routeGroups } = this.collectHookGroups(
+      options?.pageHooks,
+    );
     assertUniqueHookNames(popupGroups, "popup");
     assertUniqueHookNames(routeGroups, "route");
 
@@ -160,43 +154,54 @@ export abstract class EntryPointPageObject extends BasePageObject {
   }
 
   /**
-   * Hook groups from both sources — this entry point itself and the classes
-   * named in `options.pageHooks` — with each class contributing exactly once
-   * however it was reached.
+   * Hook groups of both kinds from both sources — this entry point itself and
+   * the classes named in `options.pageHooks` — collected in one pass so each
+   * class is constructed at most once, and contributes exactly once however
+   * it was reached.
    *
    * Dedupe is by class identity rather than by name because contributing
    * twice is not merely wasteful: the second contribution repeats every hook
    * name and `assertUniqueHookNames` throws. An entry point that also names
    * itself in `pageHooks` is the case that would otherwise break.
    *
-   * `Object.hasOwn` means a class that only inherits `popupHandlers()`
-   * contributes nothing, so a subclass must declare the override itself.
+   * `Object.hasOwn` means a class that only inherits `popupHandlers()` /
+   * `routeInterceptors()` contributes nothing of that kind, so a subclass
+   * must declare the override itself.
    */
-  private collectHookGroups<TDef>({
-    contributors,
-    kind,
-    read,
-  }: {
-    contributors: PomClass[] | undefined;
-    kind: "popupHandlers" | "routeInterceptors";
-    read: (source: RegistrablePage) => TDef[];
-  }): HookGroup<TDef>[] {
-    const groups: HookGroup<TDef>[] = [];
+  private collectHookGroups(contributors: PomClass[] | undefined): {
+    popupGroups: HookGroup<PopupHandlerDef>[];
+    routeGroups: HookGroup<RouteInterceptorDef>[];
+  } {
+    const popupGroups: HookGroup<PopupHandlerDef>[] = [];
+    const routeGroups: HookGroup<RouteInterceptorDef>[] = [];
     const seen = new Set<PomClass>();
     // `this.constructor` is typed `Function`; at runtime it is the concrete
     // entry-point class, which carries `createFromPage` and `prototype`.
     const self = this.constructor as unknown as PomClass;
 
     for (const cls of [self, ...(contributors ?? [])]) {
-      if (seen.has(cls) || !Object.hasOwn(cls.prototype, kind)) continue;
+      if (seen.has(cls)) continue;
       seen.add(cls);
+
+      const ownPopups = Object.hasOwn(cls.prototype, "popupHandlers");
+      const ownRoutes = Object.hasOwn(cls.prototype, "routeInterceptors");
+      if (!ownPopups && !ownRoutes) continue;
+
       // `this` is already bound to the page, so only contributed classes are
       // constructed.
-      const source = cls === self ? this : cls.createFromPage(this.page);
-      groups.push({ className: cls.name, cls, defs: read(source) });
+      const source: RegistrablePage =
+        cls === self ? this : cls.createFromPage(this.page);
+      if (ownPopups)
+        popupGroups.push({ className: cls.name, defs: source.popupHandlers() });
+      if (ownRoutes) {
+        routeGroups.push({
+          className: cls.name,
+          defs: source.routeInterceptors(),
+        });
+      }
     }
 
-    return groups;
+    return { popupGroups, routeGroups };
   }
 }
 
