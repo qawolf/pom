@@ -39,6 +39,8 @@ export type {
   RouteInterceptorDef,
 } from "./pageHooks.js";
 export {
+  // `PomClass` is public because `PageSetupOptions.pageHooks` takes these.
+  type PomClass,
   type PomModuleLoader,
   type RegisterPageOptions,
   createPage,

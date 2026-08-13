@@ -1,6 +1,9 @@
 import type { Locator, Route } from "playwright";
 
 import type { NetworkMonitor } from "./networkMonitor.js";
+// Type-only, so the cycle with `pageRegistry.ts` (which imports the hook def
+// types from here) is erased at runtime.
+import type { PomClass } from "./pageRegistry.js";
 import type { PopupHandler } from "./popupHandler.js";
 
 /** Popup definition declared by the POM (what popups exist on this page). */
@@ -33,6 +36,14 @@ export type PageSetupOptions = {
    *  tracking. `null` stays accepted because existing flow code passes
    *  `monitor: null` explicitly. */
   monitor?: NetworkMonitor | null;
+  /** POM classes contributing page hooks by value import rather than by
+   *  registry lookup. Each is constructed against the entry point's page via
+   *  `createFromPage`, exactly as a registered class would be.
+   *
+   *  A class listed here that declares no `popupHandlers()` /
+   *  `routeInterceptors()` override contributes nothing, and one the registry
+   *  already walked contributes once rather than twice. */
+  pageHooks?: PomClass[];
   permissions?: string[];
   proxy?: {
     password?: string;
