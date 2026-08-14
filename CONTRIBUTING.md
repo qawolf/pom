@@ -64,8 +64,7 @@ AST work:
 - **No Node built-ins.** No `fs`; use string operations instead of `path`.
 - **No APIs that changed between ESLint 8 and 9.** The `eslint` peer range is
   `>=8.40.0`.
-- **No `playwright` or `@qawolf/flows`.** Both are peer dependencies, and
-  `playwright` is optional.
+- **No `playwright` or `@qawolf/flows`.** Both are optional peer dependencies.
 - **No imports from outside `src/eslintRules/`.** The rest of the package is not
   written to these constraints, so a single `../index.js` pulls all of it into
   your rule.

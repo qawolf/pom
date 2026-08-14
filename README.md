@@ -7,9 +7,9 @@ route-hook installation.
 
 It is built for and maintained as part of the [QA Wolf](https://www.qawolf.com)
 platform, and it is the foundation the POMs in QA Wolf workspaces are generated
-against. The core page-object building blocks work with any Playwright setup,
-while some features integrate directly with the QA Wolf platform (see
-[Platform integration](#platform-integration) below).
+against. The core page-object building blocks are written against plain
+Playwright APIs, while the package as a whole expects the QA Wolf runtime to be
+present (see [Platform integration](#platform-integration) below).
 
 To learn more about how to use `@qawolf/pom`, check out the
 [API Reference](https://docs.qawolf.com/qawolf/libraries/pom/api-reference/index)
@@ -19,6 +19,15 @@ and [Documentation](https://docs.qawolf.com/qawolf/libraries/pom).
 
 - Node.js `>=22.22.0 <25`
 - [Playwright](https://playwright.dev) `1.58.2` (peer dependency)
+- [`@qawolf/flows`](https://www.npmjs.com/package/@qawolf/flows) `^0.1.4` (peer
+  dependency, supplied by the QA Wolf runner)
+
+Both are optional peers, so npm will not install them for you. That is
+deliberate for `@qawolf/flows`: a second copy of it on the module path breaks a
+run, because Playwright refuses to load twice in one process. The QA Wolf runner
+supplies flows at runtime, so a QA Wolf workspace needs nothing here. Outside
+one, add `@qawolf/flows` to your own dependencies, or importing `@qawolf/pom`
+throws `ERR_MODULE_NOT_FOUND`.
 
 ## Install
 
@@ -129,10 +138,11 @@ Wolf run, including:
 | `AUTH_USERNAME`, `AUTH_PASSWORD`                                           | Optional HTTP basic-auth credentials applied at browser launch. |
 | `QAWOLF_RUN_ID`, `QAWOLF_SUITE_ID`, `QAWOLF_TEAM_ID`, `QAWOLF_WORKFLOW_ID` | Run metadata attached to cleanup failure reports.               |
 
-The core building blocks — `BasePageObject`, `SubPageObject`, the page registry
-(`registerPage` / `createPage`), popup and route hooks, and the network monitor
-— do not require the QA Wolf platform and can be used with any Playwright
-project.
+The core building blocks (`BasePageObject`, `SubPageObject`, the page registry
+via `registerPage` and `createPage`, and popup and route hooks) do not call the
+QA Wolf platform themselves. They still need `@qawolf/flows` to resolve, because
+the package entry point re-exports `EntryPointPageObject` and `NetworkMonitor`,
+which import it.
 
 ## License
 
