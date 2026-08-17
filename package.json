@@ -65,6 +65,9 @@
     "playwright": "1.58.2"
   },
   "peerDependenciesMeta": {
+    "@qawolf/flows": {
+      "optional": true
+    },
     "eslint": {
       "optional": true
     },
