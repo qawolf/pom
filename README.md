@@ -69,24 +69,10 @@ loads second throws `Cannot access 'X' before initialization`.
 
 ### Constructing by name
 
-A page object can also be built from its registered name, which keeps its
-module out of the calling file's import graph until the first construction.
-
-```ts
-import { createPage, registerPage } from "@qawolf/pom";
-
-registerPage("LoginPage", () => import("./pages/login-page.js"));
-
-const loginPage = await createPage("LoginPage", page);
-```
-
-Inside a page object the same lookup is `await this.create("DashboardPage")`,
-with `import type { DashboardPage }` for the return type. Register the module
-for its side effects before constructing anything.
-
-A name that was never registered is resolved through the calling file's own
-imports, so page objects can construct each other by name in a workspace with no
-registry at all:
+A page object can also be built from its class name, resolved through the
+calling file's own imports. A type-only import is enough, so the module stays
+out of that file's runtime import graph — which is what lets two page objects
+name each other without a cycle:
 
 ```ts
 import { BasePageObject } from "@qawolf/pom";
@@ -106,14 +92,40 @@ binds falls back to the kebab-cased module beside the caller —
 `this.create("DashboardPage")` looking for `./dashboard-page.js`. Either way the
 module must export the class under that name.
 
-Registration always takes precedence, and a page resolved this way is not part
-of the registry, so its `popupHandlers()` and `routeInterceptors()` are not
-collected by `installPageHooks()`.
+`create` is deliberately `protected` and has no flow-facing counterpart: flow
+code never holds a Playwright `Page`, so it cannot construct page objects
+directly. A flow gets its first POM from an entry point's static `create()`,
+and every subsequent one from methods on POMs it already has.
 
-Register a page object even when nothing constructs it by name if it declares
-`popupHandlers()` or `routeInterceptors()` — `installPageHooks()` finds those
-by walking the registry, and an unregistered page object's hooks never
-install.
+### Page hooks
+
+A page object declares the popups it owns with `popupHandlers()`, and the
+routes it intercepts with `routeInterceptors()`. The entry point installs them:
+its own overrides are picked up automatically, and any other page object
+contributes by being named in `pageHooks`.
+
+```ts
+import { EntryPointPageObject } from "@qawolf/pom";
+
+import { ActivityLogPage } from "./pages/activity-log-page.js";
+
+export class LoginPage extends EntryPointPageObject {
+  static async create(options?: PageSetupOptions): Promise<LoginPage> {
+    const page = await this.initializeBrowser(options);
+    const entry = new this(page);
+    await entry.installPageHooks({ ...options, pageHooks: [ActivityLogPage] });
+    return entry;
+  }
+}
+```
+
+A page object whose hooks are neither declared on the entry point nor
+contributed through `pageHooks` never installs them — its popups simply stop
+being dismissed, with no error. Contributing the same class twice is safe:
+classes are deduped by identity.
+
+Only overrides declared directly on a class count. A subclass that merely
+inherits `popupHandlers()` contributes nothing.
 
 ## Platform integration
 
@@ -138,8 +150,8 @@ Wolf run, including:
 | `AUTH_USERNAME`, `AUTH_PASSWORD`                                           | Optional HTTP basic-auth credentials applied at browser launch. |
 | `QAWOLF_RUN_ID`, `QAWOLF_SUITE_ID`, `QAWOLF_TEAM_ID`, `QAWOLF_WORKFLOW_ID` | Run metadata attached to cleanup failure reports.               |
 
-The core building blocks (`BasePageObject`, `SubPageObject`, the page registry
-via `registerPage` and `createPage`, and popup and route hooks) do not call the
+The core building blocks (`BasePageObject`, `SubPageObject`, name-based
+construction via `this.create`, and popup and route hooks) do not call the
 QA Wolf platform themselves. They still need `@qawolf/flows` to resolve, because
 the package entry point re-exports `EntryPointPageObject` and `NetworkMonitor`,
 which import it.

@@ -1,5 +1,8 @@
 import type { Locator, Route } from "playwright";
 
+// Type-only, so the cycle with `basePageObject.ts` (which imports the hook
+// def types from here) is erased at runtime.
+import type { PomClass } from "./basePageObject.js";
 import type { NetworkMonitor } from "./networkMonitor.js";
 import type { PopupHandler } from "./popupHandler.js";
 
@@ -33,6 +36,14 @@ export type PageSetupOptions = {
    *  tracking. `null` stays accepted because existing flow code passes
    *  `monitor: null` explicitly. */
   monitor?: NetworkMonitor | null;
+  /** POM classes whose page hooks the entry point should install, passed as
+   *  value imports at the call site. Each is constructed against the entry
+   *  point's page via `createFromPage`.
+   *
+   *  A class listed here that declares no `popupHandlers()` /
+   *  `routeInterceptors()` override contributes nothing, and a class listed
+   *  twice — or that is also the entry point itself — contributes once. */
+  pageHooks?: PomClass[];
   permissions?: string[];
   proxy?: {
     password?: string;
