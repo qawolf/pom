@@ -1,5 +1,5 @@
 /**
- * Resolving a page name to a module.
+ * Resolving a page name to a module, for workspaces with no `register-pages.ts`.
  *
  * `this.create("SomePage")` names a class the calling file has almost always
  * already imported for the return type — `import type { SomePage } from
@@ -12,6 +12,9 @@
  * module next to the caller (`./some-page.js`). That covers a file whose
  * type-only import was erased by compilation, a bundle, and a source that
  * cannot be read at all.
+ *
+ * This is the fallback path only: a registered name never reaches it, so
+ * registration always wins over both mechanisms.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, relative } from "node:path";

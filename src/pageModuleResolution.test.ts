@@ -3,12 +3,13 @@ import type { Page } from "playwright";
 
 import { BasePageObject } from "./basePageObject.js";
 import { importedSpecifier, toKebabCase } from "./pageModuleResolution.js";
+import { registerPage } from "./pageRegistry.js";
 import { AnotherPage } from "./testFixtures/another-page.js";
 import { NestedPage } from "./testFixtures/nested/nested-page.js";
 
 const fakePage = {} as unknown as Page;
 
-describe("[CI] create resolves a name against the caller", () => {
+describe("[CI] create without register-pages.ts", () => {
   it("resolves a name through the caller's import, wherever it points", async () => {
     const importedPage = await new AnotherPage(fakePage).goToImported();
 
@@ -39,6 +40,15 @@ describe("[CI] create resolves a name against the caller", () => {
 
     expect(first).not.toBe(second);
     expect(first.constructor).toBe(second.constructor);
+  });
+
+  it("prefers a registered page over anything the caller resolves to", async () => {
+    class RegisteredOverridePage extends BasePageObject {}
+    registerPage("OverridePage", RegisteredOverridePage);
+
+    const overridePage = await new AnotherPage(fakePage).createOverride();
+
+    expect(overridePage).toBeInstanceOf(RegisteredOverridePage);
   });
 
   it("reports what it looked for when nothing resolves", async () => {

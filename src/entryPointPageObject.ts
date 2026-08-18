@@ -3,20 +3,12 @@ import type { Page } from "playwright";
 import { launch } from "@qawolf/flows/web";
 
 import { BasePageObject } from "./basePageObject.js";
-import type { PomClass, RegistrablePage } from "./basePageObject.js";
-import type {
-  PageSetupOptions,
-  PopupHandlerDef,
-  RouteInterceptorDef,
-} from "./pageHooks.js";
+import {
+  getRegisteredPopupHandlers,
+  getRegisteredRouteInterceptors,
+} from "./pageHookCollection.js";
+import type { PageSetupOptions } from "./pageHooks.js";
 import { buildPopupShieldInitScript } from "./popupShieldInitScript.js";
-
-/** Hook defs of one kind, attributed to the declaring class's name so a
- *  duplicate-name error can say which classes collided. */
-type HookGroup<TDef> = {
-  className: string;
-  defs: TDef[];
-};
 
 /**
  * Playwright applies HTTP auth when `httpCredentials` is set. Passing empty
@@ -100,19 +92,17 @@ export abstract class EntryPointPageObject extends BasePageObject {
   /**
    * Install all page hooks. Call before goto().
    *
-   * Hook defs come from two places: this entry point's own
-   * `popupHandlers()` / `routeInterceptors()` overrides, and the POM classes
-   * passed as `options.pageHooks`. Both are value imports at the call site,
-   * so every hook installed on a page is traceable from the one place browser
-   * setup happens.
+   * Hook defs come from the page registry — every POM that overrode
+   * `popupHandlers()` or `routeInterceptors()` on its class contributes
+   * here, not just the entry point. See `pageHookCollection.ts` for the
+   * auto-detection mechanism.
    */
   protected async installPageHooks(options?: PageSetupOptions): Promise<void> {
     const skipPopups = new Set(options?.allowPopups);
     const skipRoutes = new Set(options?.allowRoutes);
 
-    const { popupGroups, routeGroups } = this.collectHookGroups(
-      options?.pageHooks,
-    );
+    const popupGroups = await getRegisteredPopupHandlers(this.page);
+    const routeGroups = await getRegisteredRouteInterceptors(this.page);
     assertUniqueHookNames(popupGroups, "popup");
     assertUniqueHookNames(routeGroups, "route");
 
@@ -151,57 +141,6 @@ export abstract class EntryPointPageObject extends BasePageObject {
     }
 
     if (options?.monitor) options.monitor.install(this.page);
-  }
-
-  /**
-   * Hook groups of both kinds from both sources — this entry point itself and
-   * the classes named in `options.pageHooks` — collected in one pass so each
-   * class is constructed at most once, and contributes exactly once however
-   * it was reached.
-   *
-   * Dedupe is by class identity rather than by name because contributing
-   * twice is not merely wasteful: the second contribution repeats every hook
-   * name and `assertUniqueHookNames` throws. An entry point that also names
-   * itself in `pageHooks` is the case that would otherwise break.
-   *
-   * `Object.hasOwn` means a class that only inherits `popupHandlers()` /
-   * `routeInterceptors()` contributes nothing of that kind, so a subclass
-   * must declare the override itself.
-   */
-  private collectHookGroups(contributors: PomClass[] | undefined): {
-    popupGroups: HookGroup<PopupHandlerDef>[];
-    routeGroups: HookGroup<RouteInterceptorDef>[];
-  } {
-    const popupGroups: HookGroup<PopupHandlerDef>[] = [];
-    const routeGroups: HookGroup<RouteInterceptorDef>[] = [];
-    const seen = new Set<PomClass>();
-    // `this.constructor` is typed `Function`; at runtime it is the concrete
-    // entry-point class, which carries `createFromPage` and `prototype`.
-    const self = this.constructor as unknown as PomClass;
-
-    for (const cls of [self, ...(contributors ?? [])]) {
-      if (seen.has(cls)) continue;
-      seen.add(cls);
-
-      const ownPopups = Object.hasOwn(cls.prototype, "popupHandlers");
-      const ownRoutes = Object.hasOwn(cls.prototype, "routeInterceptors");
-      if (!ownPopups && !ownRoutes) continue;
-
-      // `this` is already bound to the page, so only contributed classes are
-      // constructed.
-      const source: RegistrablePage =
-        cls === self ? this : cls.createFromPage(this.page);
-      if (ownPopups)
-        popupGroups.push({ className: cls.name, defs: source.popupHandlers() });
-      if (ownRoutes) {
-        routeGroups.push({
-          className: cls.name,
-          defs: source.routeInterceptors(),
-        });
-      }
-    }
-
-    return { popupGroups, routeGroups };
   }
 }
 
