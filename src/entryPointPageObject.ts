@@ -64,6 +64,15 @@ export abstract class EntryPointPageObject extends BasePageObject {
     return launchResult.context.newPage();
   }
 
+  /** Close the browser that owns this page, swallowing teardown failures. */
+  async closeBrowser(): Promise<void> {
+    await this.page
+      .context()
+      .browser()
+      ?.close()
+      .catch(() => {});
+  }
+
   /**
    * Navigate to a URL (defaults to DEFAULT_URL from .env). Accepts Playwright's
    * `page.goto` options; `waitUntil: "domcontentloaded"` and `timeout: 60000`
@@ -145,10 +154,17 @@ export abstract class EntryPointPageObject extends BasePageObject {
 }
 
 export type InitializeBrowserOptions = {
+  args?: string[];
+  browser?: "chrome" | "chromium" | "firefox" | "msedge" | "webkit";
+  channel?: string;
   device?: BrowserDeviceOverride;
+  extraHTTPHeaders?: Record<string, string>;
+  headless?: boolean;
   permissions?: string[];
   proxy?: BrowserProxyConfig;
   slowMo?: number;
+  storageState?: string;
+  viewport?: null | { height: number; width: number };
 };
 
 type BrowserDeviceOverride = {
