@@ -1,20 +1,23 @@
 /**
  * Resolving a page name to a module, for workspaces with no `register-pages.ts`.
  *
- * `this.create("SomePage")` names a class the calling file has almost always
- * already imported for the return type — `import type { SomePage } from
- * "../primary/some-page.ts"` — so that file's own imports say where the module
- * lives, wherever it lives. A type-only import leaves nothing behind at
- * runtime, so the specifier comes from the caller's source text rather than
- * from its module graph.
+ * `this.create("SomePage")` names a class the calling file imports — `import
+ * { SomePage } from "../primary/some-page.ts"` — so that file's own imports
+ * say where the module lives, wherever it lives. The specifier is read from
+ * the caller's source text rather than from its module graph, so the import
+ * must be a *value* import: compilation erases a type-only one, and on the
+ * QA Wolf runner it is the compiled file that executes. The
+ * `require-value-import-for-created-page` lint rule enforces this at edit
+ * time.
  *
- * When no import names the class, resolution falls back to the kebab-cased
- * module next to the caller (`./some-page.js`). That covers a file whose
- * type-only import was erased by compilation, a bundle, and a source that
- * cannot be read at all.
+ * A name no import binds does not resolve. There used to be a fallback to the
+ * kebab-cased module beside the caller, but it could only ever find a page in
+ * the caller's own directory — rescuing almost nothing while turning every
+ * erased or missing import into a "works if the file happens to sit here"
+ * lottery — so it was removed rather than left to mask a missing import.
  *
  * This is the fallback path only: a registered name never reaches it, so
- * registration always wins over both mechanisms.
+ * registration always wins.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, relative } from "node:path";
@@ -23,14 +26,6 @@ import { fileURLToPath } from "node:url";
 const MODULE_EXTENSIONS = [".js", ".ts"] as const;
 
 const EXTENSION_PATTERN = /\.[cm]?[jt]s$/;
-
-/** `SomePage` -> `some-page`, `APIKeyPage` -> `api-key-page`. */
-export function toKebabCase(name: string): string {
-  return name
-    .replace(/([a-z0-9])([A-Z])/g, "$1-$2")
-    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1-$2")
-    .toLowerCase();
-}
 
 /**
  * The specifier of the import that binds `name`, if the source has one.
@@ -78,8 +73,8 @@ function boundNames(clause: string): string[] {
 }
 
 /**
- * File URLs to try for `name` from `callerUrl`, in order: what the caller's
- * import points at, then the kebab-cased module beside it.
+ * File URLs to try for `name` from `callerUrl`: what the caller's import
+ * points at, or nothing when no import binds the name.
  *
  * An import is followed only when it is relative or absolute — a bare
  * specifier belongs to the workspace's dependency resolution, not to this
@@ -92,13 +87,9 @@ export function moduleCandidates(name: string, callerUrl: string): string[] {
     specifier?.startsWith("/") ||
     specifier?.startsWith("file:");
 
-  const fromImport =
-    specifier && isPathSpecifier ? withExtensions(specifier, callerUrl) : [];
-  const fromConvention = withExtensions(`./${toKebabCase(name)}`, callerUrl);
+  if (!specifier || !isPathSpecifier) return [];
 
-  // Order is precedence, so it must survive formatting: what the calling file
-  // imports beats what the naming convention guesses.
-  const candidates = [...fromImport, ...fromConvention];
+  const candidates = withExtensions(specifier, callerUrl);
   return candidates.filter((url, index) => candidates.indexOf(url) === index);
 }
 

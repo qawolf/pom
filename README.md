@@ -91,7 +91,7 @@ registry at all:
 ```ts
 import { BasePageObject } from "@qawolf/pom";
 
-import type { DashboardPage } from "../primary/dashboard-page.js";
+import { DashboardPage } from "../primary/dashboard-page.js";
 
 export class LoginPage extends BasePageObject {
   async signIn(): Promise<DashboardPage> {
@@ -100,11 +100,12 @@ export class LoginPage extends BasePageObject {
 }
 ```
 
-The import above is enough, including a type-only one: the specifier is read
-from the file's source, not from its runtime module graph. A name that no import
-binds falls back to the kebab-cased module beside the caller —
-`this.create("DashboardPage")` looking for `./dashboard-page.js`. Either way the
-module must export the class under that name.
+The import must be a value import: the specifier is read from the executing
+file's source, and compilation erases a type-only import, so on the QA Wolf
+runner a `import type` binding leaves nothing to resolve through (the
+`require-value-import-for-created-page` lint rule catches this at edit time).
+A name that no import binds does not resolve. The module must export the class
+under that name.
 
 Registration always takes precedence, and a page resolved this way is not part
 of the registry, so its `popupHandlers()` and `routeInterceptors()` are not
