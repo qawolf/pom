@@ -1,9 +1,13 @@
 import { describe, expect, it } from "@jest/globals";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { Page } from "playwright";
 
 import { BasePageObject } from "./basePageObject.js";
-import { importedSpecifier, toKebabCase } from "./pageModuleResolution.js";
-import { registerPage } from "./pageRegistry.js";
+import { importedSpecifier } from "./pageModuleResolution.js";
+import { createPageForCaller, registerPage } from "./pageRegistry.js";
 import { AnotherPage } from "./testFixtures/another-page.js";
 import { NestedPage } from "./testFixtures/nested/nested-page.js";
 
@@ -23,11 +27,13 @@ describe("[CI] create without register-pages.ts", () => {
     expect(somePage.origin).toBe("testFixtures/some-page.ts");
   });
 
-  it("falls back to the kebab-cased module beside a name nothing imports", async () => {
-    const somePage = await new AnotherPage(fakePage).goToUnimported();
+  it("does not resolve a name nothing imports, even a same-named sibling", async () => {
+    // A some-page.ts sits right next to the caller, which the removed
+    // kebab-case fallback would have found; only an import counts now.
+    const create = new AnotherPage(fakePage).goToUnimported();
 
-    expect(somePage.constructor.name).toBe("SomePage");
-    expect(somePage).toBeInstanceOf(BasePageObject);
+    await expect(create).rejects.toThrow("Unknown page: SomePage");
+    await expect(create).rejects.toThrow("no import that binds it");
   });
 
   it("resolves once and reuses the class", async () => {
@@ -51,14 +57,34 @@ describe("[CI] create without register-pages.ts", () => {
     expect(overridePage).toBeInstanceOf(RegisteredOverridePage);
   });
 
-  it("reports what it looked for when nothing resolves", async () => {
+  it("says the caller lacks an import when an unimported name fails", async () => {
     const create = new AnotherPage(fakePage).createMissingPage();
 
     await expect(create).rejects.toThrow("Unknown page: NoSuchPage");
-    await expect(create).rejects.toThrow(
-      '"./no-such-page.js", "./no-such-page.ts"',
-    );
+    await expect(create).rejects.toThrow("no import that binds it");
     await expect(create).rejects.toThrow("testFixtures/another-page.ts");
+  });
+
+  it("reports what it looked for when an import points at a missing module", async () => {
+    // Written to a temp file rather than a fixture so tsc never has to
+    // typecheck an import of a module that does not exist.
+    const directory = await mkdtemp(join(tmpdir(), "pom-resolution-"));
+    const callerPath = join(directory, "caller.ts");
+    await writeFile(
+      callerPath,
+      'import { MissingPage } from "./missing-page.js";\n',
+    );
+
+    const create = createPageForCaller(
+      "MissingPage",
+      fakePage,
+      pathToFileURL(callerPath).href,
+    );
+
+    await expect(create).rejects.toThrow("Unknown page: MissingPage");
+    await expect(create).rejects.toThrow(
+      '"./missing-page.js", "./missing-page.ts"',
+    );
   });
 });
 
@@ -122,13 +148,5 @@ describe("[CI] importedSpecifier", () => {
     ].join("\n");
 
     expect(importedSpecifier("SomePage", source)).toBe("./some-page.js");
-  });
-});
-
-describe("[CI] toKebabCase", () => {
-  it("maps a page-object class name to its module file name", () => {
-    expect(toKebabCase("SomePage")).toBe("some-page");
-    expect(toKebabCase("APIKeyPage")).toBe("api-key-page");
-    expect(toKebabCase("Dashboard2Page")).toBe("dashboard2-page");
   });
 });

@@ -79,8 +79,8 @@ ruleTester.run(
           ${pageObject(`async goToCart() { return this.create("CartPage"); }`)}`,
       },
       {
-        // No import at all is the sibling-convention path, which is
-        // legitimate and cannot be judged from one file.
+        // No import at all may be a registered name, which one file cannot
+        // judge; unregistered, it fails identically on every platform.
         code: pageObject(
           `async goToCart() { return this.create("CartPage"); }`,
         ),

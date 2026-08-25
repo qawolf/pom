@@ -192,6 +192,17 @@ function unknownPageError(
   if (!callerUrl)
     return Error(`Unknown page: ${name}. Was register-pages.ts imported?`);
 
+  if (tried.length === 0) {
+    return Error(
+      `Unknown page: ${name}. No page is registered under that name, and ` +
+        `${callerUrl} has no import that binds it, which is how an ` +
+        `unregistered name is resolved. Add a value import of the class in ` +
+        `that file (a type-only import is erased by compilation and cannot ` +
+        `be followed), register the page in register-pages.ts, or call ` +
+        `${name}.createFromPage(this.page).`,
+    );
+  }
+
   return Error(
     `Unknown page: ${name}. No page is registered under that name, and no ` +
       `module for it was found from ${callerUrl} (tried ` +
@@ -202,10 +213,10 @@ function unknownPageError(
 }
 
 /**
- * Falls back to the module the calling file imports under `name` — or, failing
- * that, the one named for it by convention — when a name was never registered,
- * so `this.create("SomePage")` still works in a workspace with no
- * `register-pages.ts`.
+ * Falls back to the module the calling file imports under `name` when the
+ * name was never registered, so `this.create("SomePage")` still works in a
+ * workspace with no `register-pages.ts`. A name that file does not import
+ * does not resolve.
  */
 async function resolvePageClassFromCaller(
   name: string,

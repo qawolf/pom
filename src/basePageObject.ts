@@ -67,15 +67,16 @@ export abstract class BasePageObject {
    *
    * A workspace with no `register-pages.ts` needs no registry entry either:
    * an unregistered name is resolved through the calling file's own imports,
-   * so `create("SomePage")` finds whatever that file imports `SomePage` from —
-   * `import type { SomePage } from "../primary/some-page.ts"` included, since
-   * the specifier is read from the source rather than the module graph. A name
-   * nothing imports falls back to the kebab-cased module beside the caller,
-   * `./some-page.js`.
+   * so `create("SomePage")` finds whatever that file imports `SomePage` from.
+   * The import must be a *value* import — `import { SomePage } from
+   * "../primary/some-page.ts"` — because the specifier is read from the
+   * executing file's source, and compilation erases a type-only import
+   * (the `require-value-import-for-created-page` lint rule catches this).
+   * A name nothing imports does not resolve.
    *
-   * Registration always wins over both, and a page resolved this way
-   * contributes no page hooks, the same as it did before when the name failed
-   * to resolve at all.
+   * Registration always wins over the import lookup, and a page resolved this
+   * way contributes no page hooks, the same as it did before when the name
+   * failed to resolve at all.
    *
    * When the workspace's `register-pages.ts` augments `RegisteredPages`,
    * names in the map return their page-object type without an annotation;
@@ -89,8 +90,8 @@ export abstract class BasePageObject {
     name: string,
   ): Promise<TPageObject>;
   protected create(name: string): Promise<BasePageObject> {
-    // Depth 1 is the page-object method that called `create`, whose directory
-    // is where an unregistered sibling module is looked for.
+    // Depth 1 is the page-object method that called `create`, whose imports
+    // are what an unregistered name is resolved through.
     return createPageForCaller(name, this.page, callerFileUrl(1));
   }
 }
