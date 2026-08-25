@@ -1,9 +1,13 @@
 import type { Rule } from "eslint";
 
 import { noInlineLocatorInPageObjectRule } from "./noInlineLocatorInPageObject.js";
+import { requireValueImportForCreatedPageRule } from "./requireValueImportForCreatedPage.js";
 import type { PomLintRule } from "./types.js";
 
-const rules: PomLintRule[] = [noInlineLocatorInPageObjectRule];
+const rules: PomLintRule[] = [
+  noInlineLocatorInPageObjectRule,
+  requireValueImportForCreatedPageRule,
+];
 
 const entries = rules.map((rule) => ({
   ...rule,
