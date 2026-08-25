@@ -56,14 +56,21 @@ export abstract class BasePageObject {
   }
 
   /**
-   * Construct a sibling POM by its registered name, sharing this page
-   * instance. Async because a lazily registered module loads on first use.
+   * Construct a sibling POM, sharing this page instance. Pass the class where
+   * you can — `this.create(DashboardPage)` — and its name only when a name
+   * is all you have.
    *
-   * Importing the sibling and calling `SiblingPage.createFromPage(this.page)`
-   * is equally supported, and needs no registry entry and no return-type
-   * annotation — two page objects that import each other is fine. Reach for
-   * the registry when the sibling's module should stay out of this file's
-   * import graph until first use, or when a name is all you have.
+   * The class form needs no registry entry, no return-type annotation, and no
+   * runtime name resolution: the type is inferred from the class, so there is
+   * no second mention of the name to drift from the first. It also turns a
+   * type-only import into a compile error (TS1361), where the name form only
+   * fails on the runner. Two page objects that import each other is fine.
+   * Construction is synchronous, but the result is a promise so the two forms
+   * are interchangeable at a call site.
+   *
+   * The name form is async because a lazily registered module loads on first
+   * use. Reach for it when the sibling's module should stay out of this
+   * file's import graph until first use.
    *
    * A workspace with no `register-pages.ts` needs no registry entry either:
    * an unregistered name is resolved through the calling file's own imports,
@@ -83,15 +90,25 @@ export abstract class BasePageObject {
    * other names default to `BasePageObject`, so annotate the call —
    * `this.create<NextPage>("NextPage")` — for a more specific type.
    */
+  protected create<TPageObject extends BasePageObject>(
+    PageClass: new (page: Page) => TPageObject,
+  ): Promise<TPageObject>;
   protected create<TName extends keyof RegisteredPages & string>(
     name: TName,
   ): Promise<RegisteredPages[TName]>;
   protected create<TPageObject extends BasePageObject = BasePageObject>(
     name: string,
   ): Promise<TPageObject>;
-  protected create(name: string): Promise<BasePageObject> {
+  protected create(
+    nameOrClass: string | (new (page: Page) => BasePageObject),
+  ): Promise<BasePageObject> {
+    // A class needs no lookup at all; only a name is resolved. Not `async`, so
+    // the stack `callerFileUrl` reads below is the same as before.
+    if (typeof nameOrClass === "function")
+      return Promise.resolve(new nameOrClass(this.page));
+
     // Depth 1 is the page-object method that called `create`, whose imports
     // are what an unregistered name is resolved through.
-    return createPageForCaller(name, this.page, callerFileUrl(1));
+    return createPageForCaller(nameOrClass, this.page, callerFileUrl(1));
   }
 }
