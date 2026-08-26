@@ -111,6 +111,12 @@ ruleTester.run(
           )}`,
       },
       {
+        // The class form is not a name lookup; a type-only import there is
+        // already a compile error (TS1361), so the rule leaves it to tsc.
+        code: `import { CartPage } from "../cart/cart-page.ts";
+          ${pageObject(`async goToCart() { return this.create(CartPage); }`)}`,
+      },
+      {
         // A variable name cannot be checked against the imports.
         code: `import type { CartPage } from "../cart/cart-page.ts";
           ${pageObject(

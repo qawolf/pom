@@ -67,6 +67,27 @@ to each other can both expose the trip. The one shape to avoid is a page object
 that `extend`s a class in a file that imports it back — whichever of the two
 loads second throws `Cannot access 'X' before initialization`.
 
+### Constructing a sibling
+
+Inside a page object, pass the sibling's class to `create`:
+
+```ts
+import { BasePageObject } from "@qawolf/pom";
+
+import { DashboardPage } from "../primary/dashboard-page.js";
+
+export class LoginPage extends BasePageObject {
+  async signIn() {
+    return this.create(DashboardPage);
+  }
+}
+```
+
+The return type is inferred from the class, so there is no name to repeat and
+no annotation to drift from it, and nothing is resolved at runtime. Passing a
+type-only import is a compile error, which is the point: the class must be a
+value.
+
 ### Constructing by name
 
 A page object can also be built from its registered name, which keeps its
@@ -80,9 +101,10 @@ registerPage("LoginPage", () => import("./pages/login-page.js"));
 const loginPage = await createPage("LoginPage", page);
 ```
 
-Inside a page object the same lookup is `await this.create("DashboardPage")`,
-with `import type { DashboardPage }` for the return type. Register the module
-for its side effects before constructing anything.
+Inside a page object the same lookup is `await this.create("DashboardPage")`;
+annotate the call — `this.create<DashboardPage>("DashboardPage")` — for the
+return type when the name is not in `RegisteredPages`. Register the module for
+its side effects before constructing anything.
 
 A name that was never registered is resolved through the calling file's own
 imports, so page objects can construct each other by name in a workspace with no
