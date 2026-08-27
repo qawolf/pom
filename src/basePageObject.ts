@@ -1,7 +1,6 @@
 import type { Locator, Page } from "playwright";
 
 import { callerFileUrl } from "./callerModule.js";
-import type { PopupHandlerDef, RouteInterceptorDef } from "./pageHooks.js";
 import {
   describeCandidates,
   importPageModule,
@@ -13,24 +12,14 @@ export type BaselineScreenshotFn = (
   options?: Record<string, unknown>,
 ) => Promise<void>;
 
-/** What hook collection reads off a page object it did not construct. */
-export type RegistrablePage = {
-  popupHandlers(): PopupHandlerDef[];
-  routeInterceptors(): RouteInterceptorDef[];
-};
-
 /**
- * The static side of a page-object class: what `create("Name")` resolves to,
- * and what a workspace names in `PageSetupOptions.pageHooks`. Structural
- * rather than `typeof BasePageObject` because a workspace with a duplicated
- * copy of this package loads classes extending a *different* `BasePageObject`
- * identity, which are still perfectly good page objects.
+ * The static side of a page-object class, as `create("Name")` resolves it.
+ * Structural rather than `typeof BasePageObject` because a workspace with a
+ * duplicated copy of this package loads classes extending a *different*
+ * `BasePageObject` identity, which are still perfectly good page objects.
  */
 export type PomClass = {
-  createFromPage(page: Page): RegistrablePage;
-  /** The class name, used to attribute a hook in duplicate-name errors. */
-  name: string;
-  prototype: RegistrablePage;
+  createFromPage(page: Page): object;
 };
 
 export abstract class BasePageObject {
@@ -41,39 +30,14 @@ export abstract class BasePageObject {
   }
 
   /**
-   * Factory used by `create`, by page-hook collection, and by a page object
-   * constructing a sibling it imported directly.
+   * Factory used by `create`, and by a page object constructing a sibling it
+   * imported directly.
    */
   static createFromPage<TPageObject extends BasePageObject>(
     this: new (page: Page) => TPageObject,
     page: Page,
   ): TPageObject {
     return new this(page);
-  }
-
-  /**
-   * Popups owned by this POM that should be auto-dismissed when the entry
-   * point installs page hooks. Override in subclasses that own popups, and
-   * contribute the class through `PageSetupOptions.pageHooks` — an entry
-   * point contributes its own overrides automatically. Overrides are detected
-   * with an own-property check on the class's prototype, so inherited
-   * overrides are NOT picked up: declare `popupHandlers()` directly on the
-   * class that owns the popup.
-   *
-   * Override bodies typically read from `this.locators` / `this.dynamicLocators`.
-   */
-  popupHandlers(): PopupHandlerDef[] {
-    return [];
-  }
-
-  /**
-   * Route interceptors owned by this POM that should be installed when the
-   * entry point installs page hooks. Override in subclasses and contribute the
-   * class the same way as for `popupHandlers` (own-property check — inherited
-   * overrides are not picked up).
-   */
-  routeInterceptors(): RouteInterceptorDef[] {
-    return [];
   }
 
   /**

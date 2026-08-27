@@ -1,14 +1,9 @@
 import { describe, expect, it, jest } from "@jest/globals";
-import type { Browser, Locator, Page, Route } from "playwright";
+import type { Browser, BrowserContext, Locator, Page, Route } from "playwright";
 
-import { BasePageObject } from "./basePageObject.js";
 import type { InitializeBrowserOptions } from "./entryPointPageObject.js";
 import type { NetworkMonitor } from "./networkMonitor.js";
-import type {
-  PageSetupOptions,
-  PopupHandlerDef,
-  RouteInterceptorDef,
-} from "./pageHooks.js";
+import type { PopupHandlerDef, RouteInterceptorDef } from "./pageHooks.js";
 import { PopupHandler } from "./popupHandler.js";
 
 const launch = jest.fn<(options: unknown) => Promise<unknown>>();
@@ -17,22 +12,135 @@ jest.unstable_mockModule("@qawolf/flows/web", () => ({ launch }));
 
 const { EntryPointPageObject } = await import("./entryPointPageObject.js");
 
-class TestEntryPointPageObject extends EntryPointPageObject {
-  static async launchBrowser(options: InitializeBrowserOptions): Promise<Page> {
-    return this.initializeBrowser(options);
-  }
-}
-
 function pageWithBrowser(browser: Browser | null): Page {
   return {
     context: () => ({ browser: () => browser }),
   } as unknown as Page;
 }
 
+type FakePage = { locatorHandlerTriggers: Locator[]; page: Page };
+
+/**
+ * Records what `initializeBrowser` installed, and where. Context-level and
+ * page-level installs are distinguished because that split is behaviour a
+ * workspace depends on: a `cssSelector` def reaching `addLocatorHandler`
+ * would be a regression (it deadlocks when overlays stack), and a hook on the
+ * page rather than the context would miss a popup window.
+ */
+function makeFakeContext() {
+  const events: string[] = [];
+  const initScripts: string[] = [];
+  const listeners: ((page: Page) => void)[] = [];
+  const pages: FakePage[] = [];
+  const routes: string[] = [];
+
+  /** A page the context produced — the first one, or a window the app opens. */
+  function openPage(): FakePage {
+    const locatorHandlerTriggers: Locator[] = [];
+    const page = {
+      async addLocatorHandler(trigger: Locator) {
+        locatorHandlerTriggers.push(trigger);
+      },
+      on() {
+        return page;
+      },
+    } as unknown as Page;
+    const record = { locatorHandlerTriggers, page };
+    pages.push(record);
+    for (const listener of listeners) listener(page);
+    return record;
+  }
+
+  const context = {
+    async addInitScript(script: string) {
+      events.push("addInitScript");
+      initScripts.push(script);
+    },
+    async newPage() {
+      events.push("newPage");
+      return openPage().page;
+    },
+    on(_event: "page", listener: (page: Page) => void) {
+      listeners.push(listener);
+    },
+    async route(pattern: string) {
+      events.push("route");
+      routes.push(pattern);
+    },
+  } as unknown as BrowserContext;
+
+  launch.mockReset();
+  launch.mockResolvedValue({ browser: {}, context });
+
+  return { events, initScripts, openPage, pages, routes };
+}
+
+function popupDef(name: string, cssSelector?: string): PopupHandlerDef {
+  return {
+    ...(cssSelector === undefined ? {} : { cssSelector }),
+    dismiss: async () => undefined,
+    name,
+    // Carries the page it was built for, so a test can see the binding.
+    trigger: (page: Page) => ({ name, page }) as unknown as Locator,
+  };
+}
+
+function routeDef(name: string, pattern: string): RouteInterceptorDef {
+  return {
+    async handler(route: Route) {
+      await route.fallback();
+    },
+    name,
+    pattern,
+  };
+}
+
+function triggerNames(fakePage: FakePage | undefined): string[] {
+  if (!fakePage) throw Error("no page was opened");
+  return fakePage.locatorHandlerTriggers.map(
+    (trigger) => (trigger as unknown as { name: string }).name,
+  );
+}
+
+/** The shape every workspace entry point writes. */
+class TestEntry extends EntryPointPageObject {
+  static async create(options?: InitializeBrowserOptions): Promise<TestEntry> {
+    const page = await this.initializeBrowser(options);
+    return new this(page);
+  }
+}
+
+class PlainEntry extends TestEntry {}
+
+class ShopEntry extends TestEntry {
+  protected static override popupHandlers(): PopupHandlerDef[] {
+    return [
+      popupDef("cookie-banner", "#cookie-consent"),
+      popupDef("pendo-tour"),
+    ];
+  }
+
+  protected static override routeInterceptors(): RouteInterceptorDef[] {
+    return [routeDef("block-analytics", "**/analytics/**")];
+  }
+}
+
+class AdminEntry extends ShopEntry {
+  protected static override popupHandlers(): PopupHandlerDef[] {
+    return [...super.popupHandlers(), popupDef("admin-tip", "#admin-tip")];
+  }
+}
+
+class TwiceEntry extends TestEntry {
+  protected static override popupHandlers(): PopupHandlerDef[] {
+    return [popupDef("twice"), popupDef("twice")];
+  }
+}
+
 describe("[CI] EntryPointPageObject browser lifecycle", () => {
   it("closes the browser that owns its page", async () => {
     const close = jest.fn<() => Promise<void>>().mockResolvedValue(undefined);
-    const entry = new TestEntryPointPageObject(
+    const entry = new PlainEntry(
       pageWithBrowser({ close } as unknown as Browser),
     );
 
@@ -42,7 +150,7 @@ describe("[CI] EntryPointPageObject browser lifecycle", () => {
   });
 
   it("resolves when its page has no owning browser", async () => {
-    const entry = new TestEntryPointPageObject(pageWithBrowser(null));
+    const entry = new PlainEntry(pageWithBrowser(null));
 
     await expect(entry.closeBrowser()).resolves.toBeUndefined();
   });
@@ -51,7 +159,7 @@ describe("[CI] EntryPointPageObject browser lifecycle", () => {
     const close = jest
       .fn<() => Promise<void>>()
       .mockRejectedValue(Error("browser already closed"));
-    const entry = new TestEntryPointPageObject(
+    const entry = new PlainEntry(
       pageWithBrowser({ close } as unknown as Browser),
     );
 
@@ -62,9 +170,7 @@ describe("[CI] EntryPointPageObject browser lifecycle", () => {
 
 describe("[CI] EntryPointPageObject browser launch", () => {
   it("accepts and forwards every Figma entry-point launch option", async () => {
-    const page = {} as Page;
-    const newPage = jest.fn(() => page);
-    launch.mockResolvedValue({ browser: {}, context: { newPage } });
+    makeFakeContext();
     const options: InitializeBrowserOptions = {
       args: ["--use-fake-device-for-media-stream"],
       browser: "firefox",
@@ -78,9 +184,7 @@ describe("[CI] EntryPointPageObject browser launch", () => {
       InitializeBrowserOptions["browser"]
     >[] = ["chrome", "chromium", "firefox", "msedge", "webkit"];
 
-    await expect(TestEntryPointPageObject.launchBrowser(options)).resolves.toBe(
-      page,
-    );
+    await PlainEntry.create(options);
 
     expect(compatibleBrowserEngines).toContain(options.browser);
     expect(launch).toHaveBeenCalledWith(
@@ -95,339 +199,249 @@ describe("[CI] EntryPointPageObject browser launch", () => {
       }),
     );
   });
-});
 
-/**
- * Records what `installPageHooks` installed. The shield path and the
- * `addLocatorHandler` path are distinguished because which one a def takes is
- * behaviour a workspace depends on: `addLocatorHandler` deadlocks when
- * overlays stack, so a `cssSelector` def reaching it would be a regression.
- */
-function makeFakePage(): {
-  initScripts: string[];
-  locatorHandlerTriggers: Locator[];
-  page: Page;
-  routes: string[];
-} {
-  const initScripts: string[] = [];
-  const locatorHandlerTriggers: Locator[] = [];
-  const routes: string[] = [];
-  const page = {
-    async addInitScript(script: string) {
-      initScripts.push(script);
-    },
-    async addLocatorHandler(trigger: Locator) {
-      locatorHandlerTriggers.push(trigger);
-    },
-    async route(pattern: string) {
-      routes.push(pattern);
-    },
-  } as unknown as Page;
+  it("keeps the hook options out of the launch call", async () => {
+    makeFakeContext();
 
-  return { initScripts, locatorHandlerTriggers, page, routes };
-}
+    await ShopEntry.create({
+      allowPopups: "all",
+      allowRoutes: ["block-analytics"],
+      headless: true,
+      popupHandlers: [],
+      routeInterceptors: [],
+    });
 
-function popupDef(name: string, cssSelector?: string): PopupHandlerDef {
-  return {
-    ...(cssSelector === undefined ? {} : { cssSelector }),
-    dismiss: async () => undefined,
-    name,
-    trigger: { name } as unknown as Locator,
-  };
-}
-
-function routeDef(name: string, pattern: string): RouteInterceptorDef {
-  return {
-    async handler(route: Route) {
-      await route.fallback();
-    },
-    name,
-    pattern,
-  };
-}
-
-/** A non-entry POM that owns a popup — the `pageHooks` contributor case. */
-class PendoTourPage extends BasePageObject {
-  override popupHandlers(): PopupHandlerDef[] {
-    return [popupDef("pendo-tour")];
-  }
-}
-
-class RouteOnlyPage extends BasePageObject {
-  override routeInterceptors(): RouteInterceptorDef[] {
-    return [routeDef("block-analytics", "**/analytics/**")];
-  }
-}
-
-class NoHooksPage extends BasePageObject {}
-
-/** Exposes the protected `installPageHooks` and skips `initializeBrowser`. */
-class TestEntryPoint extends EntryPointPageObject {
-  async install(options?: PageSetupOptions): Promise<void> {
-    await this.installPageHooks(options);
-  }
-}
-
-class PlainEntry extends TestEntryPoint {}
-
-class EntryWithPopups extends TestEntryPoint {
-  override popupHandlers(): PopupHandlerDef[] {
-    return [popupDef("cookie-banner", '[aria-label="cookieconsent"]')];
-  }
-}
-
-class EntryWithRoutes extends TestEntryPoint {
-  override routeInterceptors(): RouteInterceptorDef[] {
-    return [routeDef("stub-config", "**/config.json")];
-  }
-}
-
-describe("[CI] installPageHooks — contributed classes", () => {
-  it("binds a contributed class to the entry point's page", async () => {
-    // Classes rather than instances, so the package — not the workspace —
-    // decides which page a contributor's defs are read against.
-    const boundPages: Page[] = [];
-    class PageRecordingPage extends BasePageObject {
-      override popupHandlers(): PopupHandlerDef[] {
-        boundPages.push(this.page);
-        return [popupDef("recorded")];
-      }
-    }
-    const { page } = makeFakePage();
-
-    await new PlainEntry(page).install({ pageHooks: [PageRecordingPage] });
-
-    expect(boundPages).toEqual([page]);
+    const launched = launch.mock.calls[0]?.[0];
+    expect(launched).toEqual(expect.objectContaining({ headless: true }));
+    expect(launched).not.toHaveProperty("allowPopups");
+    expect(launched).not.toHaveProperty("allowRoutes");
+    expect(launched).not.toHaveProperty("popupHandlers");
+    expect(launched).not.toHaveProperty("routeInterceptors");
   });
 
-  it("installs route hooks from a contributed class", async () => {
-    const { page, routes } = makeFakePage();
+  it("constructs the entry point on the first page", async () => {
+    const { pages } = makeFakeContext();
 
-    await new PlainEntry(page).install({ pageHooks: [RouteOnlyPage] });
+    const entry = await ShopEntry.create();
+
+    expect(entry).toBeInstanceOf(ShopEntry);
+    expect(pages).toHaveLength(1);
+    expect(entry["page"]).toBe(pages[0]?.page);
+  });
+
+  it("installs the hooks on the context before its first page exists", async () => {
+    const { events } = makeFakeContext();
+
+    await ShopEntry.create();
+
+    const firstPage = events.indexOf("newPage");
+    expect(firstPage).toBeGreaterThan(events.indexOf("addInitScript"));
+    expect(firstPage).toBeGreaterThan(events.indexOf("route"));
+  });
+});
+
+describe("[CI] initializeBrowser — declared hooks", () => {
+  it("shields cssSelector popups with one init script on the context", async () => {
+    const { initScripts, pages } = makeFakeContext();
+
+    await AdminEntry.create();
+
+    expect(initScripts).toHaveLength(1);
+    expect(initScripts[0]).toContain("#cookie-consent");
+    expect(initScripts[0]).toContain("#admin-tip");
+    // The shield handles these; they must not reach addLocatorHandler.
+    expect(triggerNames(pages[0])).toEqual(["pendo-tour"]);
+  });
+
+  it("binds a popup without a cssSelector to each page through addLocatorHandler", async () => {
+    const { pages } = makeFakeContext();
+
+    await ShopEntry.create();
+
+    expect(pages[0]?.locatorHandlerTriggers).toEqual([
+      expect.objectContaining({ name: "pendo-tour", page: pages[0]?.page }),
+    ]);
+  });
+
+  it("covers a window the app opens later", async () => {
+    const { openPage } = makeFakeContext();
+    await ShopEntry.create();
+
+    const popupWindow = openPage();
+
+    expect(popupWindow.locatorHandlerTriggers).toEqual([
+      expect.objectContaining({ name: "pendo-tour", page: popupWindow.page }),
+    ]);
+  });
+
+  it("intercepts declared routes on the context", async () => {
+    const { routes } = makeFakeContext();
+
+    await ShopEntry.create();
 
     expect(routes).toEqual(["**/analytics/**"]);
   });
 
-  it("routes a contributed cssSelector def into the shield, not addLocatorHandler", async () => {
-    class ShieldedPage extends BasePageObject {
-      override popupHandlers(): PopupHandlerDef[] {
-        return [popupDef("intercom", "#intercom-container")];
-      }
-    }
-    const { initScripts, locatorHandlerTriggers, page } = makeFakePage();
+  it("lets a subclass extend its parent's hooks with super", async () => {
+    const { initScripts, pages } = makeFakeContext();
 
-    await new PlainEntry(page).install({ pageHooks: [ShieldedPage] });
+    await AdminEntry.create();
 
-    expect(initScripts).toHaveLength(1);
-    expect(initScripts[0]).toContain("#intercom-container");
-    expect(locatorHandlerTriggers).toHaveLength(0);
+    expect(initScripts[0]).toContain("#cookie-consent");
+    expect(initScripts[0]).toContain("#admin-tip");
+    expect(triggerNames(pages[0])).toEqual(["pendo-tour"]);
   });
 
-  it("contributes once for a class listed twice", async () => {
-    // Contributing twice repeats every hook name, which
-    // `assertUniqueHookNames` would reject; dedupe is by class identity.
-    const { locatorHandlerTriggers, page } = makeFakePage();
+  it("installs nothing for an entry point declaring no hooks", async () => {
+    const { initScripts, pages, routes } = makeFakeContext();
 
-    await expect(
-      new PlainEntry(page).install({
-        pageHooks: [PendoTourPage, PendoTourPage],
-      }),
-    ).resolves.toBeUndefined();
-
-    expect(locatorHandlerTriggers).toHaveLength(1);
-  });
-
-  it("ignores a contributed class that declares no hooks", async () => {
-    const { initScripts, locatorHandlerTriggers, page, routes } =
-      makeFakePage();
-
-    await new PlainEntry(page).install({ pageHooks: [NoHooksPage] });
+    await PlainEntry.create();
 
     expect(initScripts).toHaveLength(0);
-    expect(locatorHandlerTriggers).toHaveLength(0);
-    expect(routes).toHaveLength(0);
-  });
-});
-
-describe("[CI] installPageHooks — entry point contributes its own hooks", () => {
-  it("installs hooks the entry point declares on itself", async () => {
-    const { initScripts, page } = makeFakePage();
-
-    await new EntryWithPopups(page).install();
-
-    expect(initScripts).toHaveLength(1);
-    // The shield embeds its selector list via JSON.stringify, so the quotes
-    // inside the attribute selector arrive escaped.
-    expect(initScripts[0]).toContain("cookieconsent");
-  });
-
-  it("installs the entry point's own hooks once when it is also in pageHooks", async () => {
-    // The same class reached by both routes must not contribute twice.
-    const { initScripts, page } = makeFakePage();
-
-    await expect(
-      new EntryWithPopups(page).install({ pageHooks: [EntryWithPopups] }),
-    ).resolves.toBeUndefined();
-
-    expect(initScripts).toHaveLength(1);
-  });
-
-  it("installs route interceptors the entry point declares", async () => {
-    const { page, routes } = makeFakePage();
-
-    await new EntryWithRoutes(page).install();
-
-    expect(routes).toEqual(["**/config.json"]);
-  });
-
-  it("contributes nothing for an entry point declaring no hooks", async () => {
-    const { initScripts, locatorHandlerTriggers, page, routes } =
-      makeFakePage();
-
-    await new PlainEntry(page).install();
-
-    expect(initScripts).toHaveLength(0);
-    expect(locatorHandlerTriggers).toHaveLength(0);
+    expect(pages[0]?.locatorHandlerTriggers).toHaveLength(0);
     expect(routes).toHaveLength(0);
   });
 
-  it("does not contribute hooks a subclass merely inherits", async () => {
-    // Overrides are detected with `Object.hasOwn`, so an inherited
-    // `popupHandlers()` is not picked up.
-    class SubclassedEntry extends EntryWithPopups {}
-    const { initScripts, page } = makeFakePage();
+  it("rejects a name declared twice", async () => {
+    makeFakeContext();
 
-    await new SubclassedEntry(page).install();
-
-    expect(initScripts).toHaveLength(0);
-  });
-});
-
-describe("[CI] installPageHooks — explicit pageHooks contributors", () => {
-  it("installs popup hooks from a contributed class", async () => {
-    const { locatorHandlerTriggers, page } = makeFakePage();
-
-    await new PlainEntry(page).install({ pageHooks: [PendoTourPage] });
-
-    // No cssSelector, so this def takes the addLocatorHandler path.
-    expect(locatorHandlerTriggers).toEqual([{ name: "pendo-tour" }]);
-  });
-});
-
-describe("[CI] installPageHooks — skips, collisions and flow-owned objects", () => {
-  it("skips a contributed popup named in allowPopups", async () => {
-    const { locatorHandlerTriggers, page } = makeFakePage();
-
-    await new PlainEntry(page).install({
-      allowPopups: ["pendo-tour"],
-      pageHooks: [PendoTourPage],
-    });
-
-    expect(locatorHandlerTriggers).toHaveLength(0);
-  });
-
-  it("skips a contributed route named in allowRoutes", async () => {
-    const { page, routes } = makeFakePage();
-
-    await new PlainEntry(page).install({
-      allowRoutes: ["block-analytics"],
-      pageHooks: [RouteOnlyPage],
-    });
-
-    expect(routes).toHaveLength(0);
-  });
-
-  it("still rejects two contributors sharing a hook name", async () => {
-    class RivalPendoPage extends BasePageObject {
-      override popupHandlers(): PopupHandlerDef[] {
-        return [popupDef("pendo-tour")];
-      }
-    }
-    const { page } = makeFakePage();
-
-    await expect(
-      new PlainEntry(page).install({
-        pageHooks: [PendoTourPage, RivalPendoPage],
-      }),
-    ).rejects.toThrow(
-      'Duplicate popup hook name "pendo-tour" registered by both PendoTourPage and RivalPendoPage',
+    await expect(TwiceEntry.create()).rejects.toThrow(
+      'Duplicate popup hook name "twice" declared on TwiceEntry.',
     );
   });
+});
 
-  it("rejects a contributor colliding with the entry point's own hook", async () => {
-    class RivalCookiePage extends BasePageObject {
-      override popupHandlers(): PopupHandlerDef[] {
-        return [popupDef("cookie-banner")];
-      }
-    }
-    const { page } = makeFakePage();
+describe("[CI] initializeBrowser — a flow's adjustments", () => {
+  it("lets a named popup show", async () => {
+    const { initScripts, pages } = makeFakeContext();
 
-    await expect(
-      new EntryWithPopups(page).install({ pageHooks: [RivalCookiePage] }),
-    ).rejects.toThrow('Duplicate popup hook name "cookie-banner"');
+    await ShopEntry.create({ allowPopups: ["cookie-banner"] });
+
+    expect(initScripts).toHaveLength(0);
+    expect(triggerNames(pages[0])).toEqual(["pendo-tour"]);
   });
 
-  it("merges the entry point's own hooks with contributed ones", async () => {
-    const { initScripts, locatorHandlerTriggers, page, routes } =
-      makeFakePage();
+  it('lets every declared popup show with "all", keeping the flow\'s own', async () => {
+    const { initScripts, pages } = makeFakeContext();
 
-    await new EntryWithPopups(page).install({
-      pageHooks: [PendoTourPage, RouteOnlyPage],
+    await ShopEntry.create({
+      allowPopups: "all",
+      popupHandlers: [popupDef("survey")],
     });
 
-    expect(initScripts[0]).toContain("cookieconsent"); // entry point
-    expect(locatorHandlerTriggers).toEqual([{ name: "pendo-tour" }]); // contributed
-    expect(routes).toEqual(["**/analytics/**"]); // contributed
+    expect(initScripts).toHaveLength(0);
+    expect(triggerNames(pages[0])).toEqual(["survey"]);
   });
 
-  it("registers contributed popups through a flow-owned PopupHandler", async () => {
+  it("lets a named request through, or all of them", async () => {
+    const byName = makeFakeContext();
+    await ShopEntry.create({ allowRoutes: ["block-analytics"] });
+    expect(byName.routes).toHaveLength(0);
+
+    const all = makeFakeContext();
+    await ShopEntry.create({
+      allowRoutes: "all",
+      routeInterceptors: [routeDef("block-chat", "**/chat/**")],
+    });
+    expect(all.routes).toEqual(["**/chat/**"]);
+  });
+
+  it("adds the flow's own popups and routes on top of the declared ones", async () => {
+    const { pages, routes } = makeFakeContext();
+
+    await ShopEntry.create({
+      popupHandlers: [popupDef("survey")],
+      routeInterceptors: [routeDef("block-chat", "**/chat/**")],
+    });
+
+    expect(triggerNames(pages[0])).toEqual(["pendo-tour", "survey"]);
+    expect(routes).toEqual(["**/analytics/**", "**/chat/**"]);
+  });
+
+  it("replaces a declared hook with the flow's same-named one", async () => {
+    const { initScripts, pages } = makeFakeContext();
+
+    // The declared cookie-banner has a cssSelector; this one does not, so the
+    // replacement is visible in which mechanism ends up handling it.
+    await ShopEntry.create({ popupHandlers: [popupDef("cookie-banner")] });
+
+    expect(initScripts).toHaveLength(0);
+    // A replacement keeps the declared hook's position.
+    expect(triggerNames(pages[0])).toEqual(["cookie-banner", "pendo-tour"]);
+  });
+
+  it("installs the flow's own hook even when its name is also allowed", async () => {
+    const { pages } = makeFakeContext();
+
+    await ShopEntry.create({
+      allowPopups: ["cookie-banner"],
+      popupHandlers: [popupDef("cookie-banner")],
+    });
+
+    expect(triggerNames(pages[0])).toEqual(["pendo-tour", "cookie-banner"]);
+  });
+
+  it("rejects a name the flow passes twice", async () => {
+    makeFakeContext();
+
+    await expect(
+      PlainEntry.create({
+        routeInterceptors: [routeDef("x", "**/a"), routeDef("x", "**/b")],
+      }),
+    ).rejects.toThrow(
+      'Duplicate route hook name "x" passed to initializeBrowser.',
+    );
+  });
+});
+
+describe("[CI] initializeBrowser — flow-owned objects", () => {
+  it("registers every popup through a flow-owned PopupHandler on the first page", async () => {
     // With a handler supplied, every popup goes through it and the CSS
     // shield stays out of the way — including a def carrying a cssSelector.
     const handler = new PopupHandler("main");
-    const { initScripts, page } = makeFakePage();
+    const { initScripts, pages } = makeFakeContext();
 
-    await new EntryWithPopups(page).install({
-      handler,
-      pageHooks: [PendoTourPage],
-    });
+    await ShopEntry.create({ handler, popupHandlers: [popupDef("survey")] });
 
-    expect(handler.registered).toEqual(["cookie-banner", "pendo-tour"]);
+    expect(handler.registered).toEqual([
+      "cookie-banner",
+      "pendo-tour",
+      "survey",
+    ]);
     expect(initScripts).toHaveLength(0);
+    expect(pages[0]?.locatorHandlerTriggers).toEqual([
+      expect.objectContaining({ name: "cookie-banner", page: pages[0]?.page }),
+      expect.objectContaining({ name: "pendo-tour" }),
+      expect.objectContaining({ name: "survey" }),
+    ]);
   });
 
-  it("does not register an allowPopups popup through the handler", async () => {
+  it("does not register an allowed popup through the handler", async () => {
     const handler = new PopupHandler("main");
-    const { page } = makeFakePage();
+    makeFakeContext();
 
-    await new PlainEntry(page).install({
-      allowPopups: ["pendo-tour"],
-      handler,
-      pageHooks: [PendoTourPage],
-    });
+    await ShopEntry.create({ allowPopups: "all", handler });
 
     expect(handler.registered).toHaveLength(0);
   });
 
-  it("installs a flow-owned monitor on the entry point's page", async () => {
+  it("installs a flow-owned monitor on the first page", async () => {
     const install = jest.fn<(page: Page) => void>();
     const monitor = { install } as unknown as NetworkMonitor;
-    const { page } = makeFakePage();
+    const { pages } = makeFakeContext();
 
-    await new PlainEntry(page).install({ monitor, pageHooks: [PendoTourPage] });
+    await ShopEntry.create({ monitor });
 
-    expect(install).toHaveBeenCalledWith(page);
+    expect(install.mock.calls[0]?.[0]).toBe(pages[0]?.page);
   });
 
   it("accepts monitor: null, which existing flow code passes explicitly", async () => {
-    const { locatorHandlerTriggers, page } = makeFakePage();
+    const { pages } = makeFakeContext();
 
-    await expect(
-      new PlainEntry(page).install({
-        monitor: null,
-        pageHooks: [PendoTourPage],
-      }),
-    ).resolves.toBeUndefined();
+    await expect(ShopEntry.create({ monitor: null })).resolves.toBeInstanceOf(
+      ShopEntry,
+    );
 
-    expect(locatorHandlerTriggers).toHaveLength(1);
+    expect(triggerNames(pages[0])).toEqual(["pendo-tour"]);
   });
 });

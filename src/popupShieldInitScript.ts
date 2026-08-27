@@ -5,7 +5,7 @@
  * styles. Inline !important always beats stylesheet !important (regardless of
  * specificity or load order), so page CSS can never override this shield.
  * Runs before any page JS on every navigation — deadlock-free, unlike
- * addLocatorHandler (see `EntryPointPageObject.installPageHooks`).
+ * addLocatorHandler (see `EntryPointPageObject.initializeBrowser`).
  */
 export function buildPopupShieldInitScript(cssSelectors: string[]): string {
   const selectorList = cssSelectors.join(", ");

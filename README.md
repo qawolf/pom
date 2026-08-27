@@ -120,40 +120,77 @@ and every subsequent one from methods on POMs it already has.
 
 ### Page hooks
 
-A page object declares the popups it owns with `popupHandlers()`, and the
-routes it intercepts with `routeInterceptors()`. The entry point installs them:
-its own overrides are picked up automatically, and any other page object
-contributes by being named in `pageHooks`.
+An entry point declares the popups to dismiss and the routes to intercept on
+every page of every browser it launches. The declarations are static because
+they are installed on the browser context before its first page exists, so
+each def is built against whichever page it ends up applying to:
 
 ```ts
 import { EntryPointPageObject } from "@qawolf/pom";
-
-import { ActivityLogPage } from "./pages/activity-log-page.js";
+import type { PopupHandlerDef, RouteInterceptorDef } from "@qawolf/pom";
 
 export class LoginPage extends EntryPointPageObject {
   static async create(options?: PageSetupOptions): Promise<LoginPage> {
     const page = await this.initializeBrowser(options);
-    const entry = new this(page);
-    await entry.installPageHooks({ ...options, pageHooks: [ActivityLogPage] });
-    return entry;
+    return new this(page);
+  }
+
+  protected static override popupHandlers(): PopupHandlerDef[] {
+    return [
+      {
+        cssSelector: "#cookie-consent",
+        dismiss: (page) => page.locator("#cookie-consent .accept").click(),
+        name: "cookie-banner",
+        trigger: (page) => page.locator("#cookie-consent"),
+      },
+    ];
+  }
+
+  protected static override routeInterceptors(): RouteInterceptorDef[] {
+    return [
+      {
+        handler: (route) => route.abort(),
+        name: "block-analytics",
+        pattern: "**/analytics/**",
+      },
+    ];
   }
 }
 ```
 
-Pass classes, not instances: the package binds each one to the entry point's
-Playwright `page` via `createFromPage`.
+`initializeBrowser()` launches the browser, installs the hooks on its context,
+and returns the first page; `create()` adds whatever else the first page needs
+— a `goto`, a sign-in. Because the hooks live on the context, a second
+tab or a popup window the app opens carries them too. A popup with a
+`cssSelector` is hidden by a `<style>` tag injected before any navigation; one
+without falls back to `addLocatorHandler` on each page. `super.popupHandlers()`
+extends a parent entry point's list. Other page objects declare nothing.
 
-A page object whose hooks are neither declared on the entry point nor
-contributed through `pageHooks` never installs them — its popups simply stop
-being dismissed, with no error. Contributing the same class twice is safe:
-classes are deduped by identity.
+The declared hooks are the default. A flow adjusts them through the options
+it passes to `create()`:
 
-Whichever source a def arrives from, the rest of installation is identical: the
-CSS-injection popup shield, the `addLocatorHandler` fallback, the `allowPopups`
-/ `allowRoutes` skips, and the duplicate-hook-name guard all behave the same.
+```ts
+// Test the cookie banner itself, and let analytics through.
+await LoginPage.create({ allowPopups: ["cookie-banner"], allowRoutes: "all" });
 
-Only overrides declared directly on a class count. A subclass that merely
-inherits `popupHandlers()` contributes nothing.
+// Block one more endpoint, in this flow only.
+await LoginPage.create({
+  routeInterceptors: [
+    {
+      handler: (route) => route.abort(),
+      name: "block-chat",
+      pattern: "**/chat/**",
+    },
+  ],
+});
+```
+
+`allowPopups` / `allowRoutes` skip declared hooks by name, or all of them with
+`"all"`; `popupHandlers` / `routeInterceptors` add the flow's own, a same-named
+one replacing the declared one. A flow-owned `PopupHandler` (`handler`) takes
+over every popup on the entry point's page, and a flow-owned `NetworkMonitor`
+(`monitor`) is installed there; both are one-per-page objects, so they cover
+the first page only.
 
 ### Migrating from the page registry
 
@@ -166,8 +203,10 @@ To move a workspace off `register-pages.ts`:
   value and pass it: `this.create(Name)`. The name form keeps working given a
   value import, but a type-only one no longer resolves anywhere.
 - Where a page object declares `popupHandlers()` / `routeInterceptors()`,
-  list its class in the entry point's `installPageHooks({ pageHooks: [...] })`
-  — unless it is the entry point itself, which contributes automatically.
+  move the declaration onto the entry point as a `static` method. `trigger`
+  and `dismiss` now take the `page` they apply to, since the hooks cover
+  every page of the browser context, and `installPageHooks()` is gone —
+  `initializeBrowser()` installs them.
 - Flow code that called `createPage("Name", page)` gets its page objects from
   methods on the entry point instead.
 

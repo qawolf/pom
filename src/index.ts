@@ -1,9 +1,4 @@
-export {
-  type BaselineScreenshotFn,
-  // `PomClass` is public because `PageSetupOptions.pageHooks` takes these.
-  type PomClass,
-  BasePageObject,
-} from "./basePageObject.js";
+export { type BaselineScreenshotFn, BasePageObject } from "./basePageObject.js";
 export {
   type ReportCleanupFailedParams,
   reportCleanupFailed,
@@ -15,6 +10,7 @@ export {
 } from "./entryPointPageObject.js";
 export { type NetworkError, NetworkMonitor } from "./networkMonitor.js";
 export type {
+  PageHookOptions,
   PageSetupOptions,
   PopupHandlerDef,
   RouteInterceptorDef,
