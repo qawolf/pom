@@ -10,6 +10,14 @@ class DashboardPage extends BasePageObject {
 }
 
 class ProbePage extends BasePageObject {
+  siblingByName() {
+    return this.create("DashboardPage");
+  }
+
+  siblingByNameWithGeneric() {
+    return this.create<DashboardPage>("DashboardPage");
+  }
+
   siblingViaClass() {
     return this.create(DashboardPage);
   }
@@ -27,5 +35,17 @@ describe("BasePageObject.create", () => {
     expectTypeOf<ReturnType<ProbePage["siblingViaClass"]>>().toEqualTypeOf<
       Promise<DashboardPage>
     >();
+  });
+
+  it("defaults the name form to BasePageObject", () => {
+    expectTypeOf<
+      Awaited<ReturnType<ProbePage["siblingByName"]>>
+    >().toEqualTypeOf<BasePageObject>();
+  });
+
+  it("keeps the explicit-generic name form working", () => {
+    expectTypeOf<
+      ReturnType<ProbePage["siblingByNameWithGeneric"]>
+    >().toEqualTypeOf<Promise<DashboardPage>>();
   });
 });

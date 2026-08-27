@@ -2,7 +2,7 @@ import { describe, expect, it } from "@jest/globals";
 import type { Page } from "playwright";
 
 import { BasePageObject } from "./basePageObject.js";
-import { registerPage } from "./pageRegistry.js";
+import { ImportedPage } from "./testFixtures/primary/imported-page.js";
 
 const fakePage = {} as unknown as Page;
 
@@ -28,8 +28,9 @@ class HomePage extends BasePageObject {
     return this.create(UnresolvablePage);
   }
 
+  /** Resolved through this test file's own value import of the class. */
   createByName() {
-    return this.create<DashboardPage>("RegisteredDashboardPage");
+    return this.create<ImportedPage>("ImportedPage");
   }
 }
 
@@ -60,12 +61,10 @@ describe("[CI] create", () => {
     expect(unresolvablePage.sharedPage).toBe(fakePage);
   });
 
-  it("still resolves a name", async () => {
-    registerPage("RegisteredDashboardPage", DashboardPage);
+  it("still resolves a name through the caller's imports", async () => {
+    const importedPage = await new HomePage(fakePage).createByName();
 
-    const dashboardPage = await new HomePage(fakePage).createByName();
-
-    expect(dashboardPage).toBeInstanceOf(DashboardPage);
-    expect(dashboardPage.sharedPage).toBe(fakePage);
+    expect(importedPage).toBeInstanceOf(ImportedPage);
+    expect(importedPage.sharedPage).toBe(fakePage);
   });
 });

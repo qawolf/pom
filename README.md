@@ -1,9 +1,8 @@
 # @qawolf/pom
 
 `@qawolf/pom` is a TypeScript toolkit for building Page Object Models (POMs) on
-top of Playwright: base classes for page objects, a registry that constructs
-page objects by name and collects their page hooks, and automatic popup and
-route-hook installation.
+top of Playwright: base classes for page objects, construction of sibling page
+objects by class or by name, and automatic popup and route-hook installation.
 
 It is built for and maintained as part of the [QA Wolf](https://www.qawolf.com)
 platform, and it is the foundation the POMs in QA Wolf workspaces are generated
@@ -90,25 +89,8 @@ value.
 
 ### Constructing by name
 
-A page object can also be built from its registered name, which keeps its
-module out of the calling file's import graph until the first construction.
-
-```ts
-import { createPage, registerPage } from "@qawolf/pom";
-
-registerPage("LoginPage", () => import("./pages/login-page.js"));
-
-const loginPage = await createPage("LoginPage", page);
-```
-
-Inside a page object the same lookup is `await this.create("DashboardPage")`;
-annotate the call — `this.create<DashboardPage>("DashboardPage")` — for the
-return type when the name is not in `RegisteredPages`. Register the module for
-its side effects before constructing anything.
-
-A name that was never registered is resolved through the calling file's own
-imports, so page objects can construct each other by name in a workspace with no
-registry at all:
+A page object can also be built from its class name, resolved through the
+calling file's own imports:
 
 ```ts
 import { BasePageObject } from "@qawolf/pom";
@@ -116,27 +98,131 @@ import { BasePageObject } from "@qawolf/pom";
 import { DashboardPage } from "../primary/dashboard-page.js";
 
 export class LoginPage extends BasePageObject {
-  async signIn(): Promise<DashboardPage> {
-    return this.create("DashboardPage");
+  async signIn() {
+    return this.create<DashboardPage>("DashboardPage");
   }
 }
 ```
 
 The import must be a value import: the specifier is read from the executing
 file's source, and compilation erases a type-only import, so on the QA Wolf
-runner a `import type` binding leaves nothing to resolve through (the
+runner an `import type` binding leaves nothing to resolve through (the
 `require-value-import-for-created-page` lint rule catches this at edit time).
 A name that no import binds does not resolve. The module must export the class
-under that name.
+under that name. Annotate the call for a return type more specific than
+`BasePageObject` — and note that nothing checks the annotation and the name
+agree, which is the other reason to prefer passing the class.
 
-Registration always takes precedence, and a page resolved this way is not part
-of the registry, so its `popupHandlers()` and `routeInterceptors()` are not
-collected by `installPageHooks()`.
+`create` is deliberately `protected` and has no flow-facing counterpart: flow
+code never holds a Playwright `Page`, so it cannot construct page objects
+directly. A flow gets its first POM from an entry point's static `create()`,
+and every subsequent one from methods on POMs it already has.
 
-Register a page object even when nothing constructs it by name if it declares
-`popupHandlers()` or `routeInterceptors()` — `installPageHooks()` finds those
-by walking the registry, and an unregistered page object's hooks never
-install.
+### Page hooks
+
+An entry point declares the popups to dismiss and the routes to intercept on
+every page of every browser it launches. The declarations are static because
+they are installed on the browser context before its first page exists, so
+each def is built against whichever page it ends up applying to:
+
+```ts
+import { EntryPointPageObject } from "@qawolf/pom";
+import type { PopupHandlerDef, RouteInterceptorDef } from "@qawolf/pom";
+
+export class LoginPage extends EntryPointPageObject {
+  static async create(options?: PageSetupOptions): Promise<LoginPage> {
+    const page = await this.initializeBrowser(options);
+    return new this(page);
+  }
+
+  protected static override popupHandlers(): PopupHandlerDef[] {
+    return [
+      {
+        cssSelector: "#cookie-consent",
+        dismiss: (page) => page.locator("#cookie-consent .accept").click(),
+        name: "cookie-banner",
+        trigger: (page) => page.locator("#cookie-consent"),
+      },
+    ];
+  }
+
+  protected static override routeInterceptors(): RouteInterceptorDef[] {
+    return [
+      {
+        handler: (route) => route.abort(),
+        name: "block-analytics",
+        pattern: "**/analytics/**",
+      },
+    ];
+  }
+}
+```
+
+`initializeBrowser()` launches the browser, installs the hooks on its context,
+and returns the first page; `create()` adds whatever else the first page needs
+— a `goto`, a sign-in. Because the hooks live on the context, a second
+tab or a popup window the app opens carries them too. A popup with a
+`cssSelector` is hidden by a `<style>` tag injected before any navigation; one
+without falls back to `addLocatorHandler` on each page. `super.popupHandlers()`
+extends a parent entry point's list. Other page objects declare nothing.
+
+The declared hooks are the default. A flow adjusts them through the options
+it passes to `create()`:
+
+```ts
+// Test the cookie banner itself, and let analytics through.
+await LoginPage.create({ allowPopups: ["cookie-banner"], allowRoutes: "all" });
+
+// Block one more endpoint, in this flow only.
+await LoginPage.create({
+  routeInterceptors: [
+    {
+      handler: (route) => route.abort(),
+      name: "block-chat",
+      pattern: "**/chat/**",
+    },
+  ],
+});
+```
+
+`allowPopups` / `allowRoutes` skip declared hooks by name, or all of them with
+`"all"`; `popupHandlers` / `routeInterceptors` add the flow's own, a same-named
+one replacing the declared one. A flow-owned `PopupHandler` (`handler`) takes
+over every popup on the entry point's page; it is a one-per-page object, so it
+covers the first page only.
+
+### Network errors
+
+Every browser an entry point launches records its 4xx/5xx responses — from
+the first page, a second tab, a popup window alike — on a `NetworkMonitor`
+bound to the browser context. Asserting is the flow's choice:
+
+```ts
+const login = await LoginPage.create();
+// ...
+login.networkMonitor.assertClean({ exclude: [/analytics/] });
+```
+
+Pass `monitor: false` to `create()` to turn recording off for a flow, or a
+`NetworkMonitor` of the flow's own to have that one installed instead.
+
+### Migrating from the page registry
+
+`registerPage`, `createPage` and the `RegisteredPages` augmentation are gone.
+To move a workspace off `register-pages.ts`:
+
+- Delete `register-pages.ts`, including its `declare module "@qawolf/pom"`
+  block, and every import of it.
+- Where a page object calls `this.create("Name")`, import the class as a
+  value and pass it: `this.create(Name)`. The name form keeps working given a
+  value import, but a type-only one no longer resolves anywhere.
+- Where a page object declares `popupHandlers()` / `routeInterceptors()`,
+  move the declaration onto the entry point as a `static` method. `trigger`
+  and `dismiss` now take the `page` they apply to, since the hooks cover
+  every page of the browser context, and `installPageHooks()` is gone —
+  `initializeBrowser()` installs them.
+- Flow code that called `createPage("Name", page)` gets its page objects from
+  methods on the entry point instead.
 
 ## Platform integration
 
@@ -161,9 +247,8 @@ Wolf run, including:
 | `AUTH_USERNAME`, `AUTH_PASSWORD`                                           | Optional HTTP basic-auth credentials applied at browser launch. |
 | `QAWOLF_RUN_ID`, `QAWOLF_SUITE_ID`, `QAWOLF_TEAM_ID`, `QAWOLF_WORKFLOW_ID` | Run metadata attached to cleanup failure reports.               |
 
-The core building blocks (`BasePageObject`, `SubPageObject`, the page registry
-via `registerPage` and `createPage`, and popup and route hooks) do not call the
-QA Wolf platform themselves. They still need `@qawolf/flows` to resolve, because
+The core building blocks (`BasePageObject`, `SubPageObject`, and popup and
+route hooks) do not call the QA Wolf platform themselves. They still need `@qawolf/flows` to resolve, because
 the package entry point re-exports `EntryPointPageObject` and `NetworkMonitor`,
 which import it.
 

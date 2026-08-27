@@ -1,13 +1,14 @@
-import type { Page } from "playwright";
+import type { BrowserContext, Page } from "playwright";
 
 import { launch } from "@qawolf/flows/web";
 
 import { BasePageObject } from "./basePageObject.js";
-import {
-  getRegisteredPopupHandlers,
-  getRegisteredRouteInterceptors,
-} from "./pageHookCollection.js";
-import type { PageSetupOptions } from "./pageHooks.js";
+import { NetworkMonitor } from "./networkMonitor.js";
+import type {
+  PageHookOptions,
+  PopupHandlerDef,
+  RouteInterceptorDef,
+} from "./pageHooks.js";
 import { buildPopupShieldInitScript } from "./popupShieldInitScript.js";
 
 /**
@@ -26,42 +27,219 @@ function optionalHttpCredentialsFromEnv():
   return {};
 }
 
+/**
+ * Names are unique within one source so that `allowPopups` / `allowRoutes`
+ * and same-name replacement are unambiguous. Across sources a repeat is
+ * deliberate: the flow's hook replaces the declared one.
+ */
 function assertUniqueHookNames(
-  groups: { className: string; defs: { name: string }[] }[],
+  defs: readonly { name: string }[],
   kind: "popup" | "route",
+  source: string,
 ): void {
-  const seen = new Map<string, string>();
-  for (const { className, defs } of groups) {
-    for (const def of defs) {
-      const prev = seen.get(def.name);
-      if (prev !== undefined) {
-        if (prev === className) {
-          throw Error(
-            `Duplicate ${kind} hook name "${def.name}" defined twice on ${className}.`,
-          );
-        }
-        throw Error(
-          `Duplicate ${kind} hook name "${def.name}" registered by both ${prev} and ${className}.`,
-        );
-      }
-      seen.set(def.name, className);
-    }
+  const seen = new Set<string>();
+  for (const { name } of defs) {
+    if (seen.has(name))
+      throw Error(`Duplicate ${kind} hook name "${name}" ${source}.`);
+    seen.add(name);
   }
 }
 
+/**
+ * The hooks to install: what the entry point declares, minus what the flow
+ * allows through, plus what the flow adds — a flow's hook replacing a
+ * declared one of the same name, allowed or not.
+ */
+function resolveHooks<TDef extends { name: string }>({
+  additions,
+  allow,
+  className,
+  declared,
+  kind,
+}: {
+  additions: readonly TDef[];
+  allow: string[] | "all" | undefined;
+  className: string;
+  declared: readonly TDef[];
+  kind: "popup" | "route";
+}): TDef[] {
+  assertUniqueHookNames(declared, kind, `declared on ${className}`);
+  assertUniqueHookNames(additions, kind, "passed to initializeBrowser");
+
+  const allowed = new Set(allow === "all" ? [] : (allow ?? []));
+  const kept =
+    allow === "all" ? [] : declared.filter((def) => !allowed.has(def.name));
+
+  const byName = new Map(kept.map((def) => [def.name, def]));
+  for (const def of additions) byName.set(def.name, def);
+
+  return [...byName.values()];
+}
+
+/**
+ * The `addLocatorHandler` fallback for popups with no `cssSelector`, on one
+ * page. In default mode the shield is preferred because `addLocatorHandler`
+ * deadlocks when multiple overlays stack — each handler waits for the action
+ * pipeline, blocking all locator operations (evaluate, count, screenshot).
+ */
+async function installLocatorHandlers(
+  page: Page,
+  defs: readonly PopupHandlerDef[],
+): Promise<void> {
+  for (const def of defs) {
+    await page.addLocatorHandler(def.trigger(page), async () => {
+      await def.dismiss(page);
+    });
+  }
+}
+
+/**
+ * The monitor `initializeBrowser` installed on each context, for the entry
+ * point constructed on one of its pages to hand back. Keyed by context rather
+ * than stored on the instance because the static initializer runs before any
+ * instance exists.
+ */
+const monitorsByContext = new WeakMap<BrowserContext, NetworkMonitor>();
+
 export abstract class EntryPointPageObject extends BasePageObject {
+  /**
+   * The `NetworkMonitor` recording every 4xx/5xx response in this browser
+   * context — the first page, a second tab, a popup window alike. Owned by
+   * the entry point unless the flow passed its own `monitor`; throws if the
+   * browser was launched with `monitor: false`.
+   */
+  get networkMonitor(): NetworkMonitor {
+    const monitor = monitorsByContext.get(this.page.context());
+    if (!monitor) {
+      throw Error(
+        `${this.constructor.name} has no NetworkMonitor: the browser was ` +
+          `launched with { monitor: false }, or its page did not come from ` +
+          `initializeBrowser.`,
+      );
+    }
+    return monitor;
+  }
+
+  // Concrete entry points define `static async create(options)` as
+  // `new this(await this.initializeBrowser(options))`, plus whatever else
+  // their first page needs — a `goto`, a sign-in.
+
+  /**
+   * Launch a browser and return its first page, with the page hooks installed
+   * on the browser context so that every page it produces — the first, a
+   * second tab, a popup window the app opens — carries them. Installation
+   * precedes the first page, so no navigation can get ahead of the
+   * CSS-injection shield.
+   *
+   * Network errors are recorded per context too — see `networkMonitor`. The
+   * flow-owned `handler` is a one-per-page object and binds to the first page
+   * only.
+   */
   protected static async initializeBrowser(
     options: InitializeBrowserOptions = {},
   ): Promise<Page> {
+    const {
+      allowPopups,
+      allowRoutes,
+      handler,
+      monitor,
+      popupHandlers,
+      routeInterceptors,
+      ...launchOptions
+    } = options;
+
+    const popups = resolveHooks({
+      additions: popupHandlers ?? [],
+      allow: allowPopups,
+      className: this.name,
+      declared: this.popupHandlers(),
+      kind: "popup",
+    });
+    const routes = resolveHooks({
+      additions: routeInterceptors ?? [],
+      allow: allowRoutes,
+      className: this.name,
+      declared: this.routeInterceptors(),
+      kind: "route",
+    });
+
     const launchResult = await launch({
-      ...options,
+      ...launchOptions,
       ...optionalHttpCredentialsFromEnv(),
     });
 
     if (!("browser" in launchResult))
       throw Error("Expected a browser launch result for QAW platform context.");
 
-    return launchResult.context.newPage();
+    const { context } = launchResult;
+
+    // Default on: recording is one listener and an array, and asserting
+    // stays the flow's choice. `null` is what existing flow code passes for
+    // "none", so it reads as `false`.
+    const networkMonitor =
+      monitor === undefined ? new NetworkMonitor(this.name) : monitor || null;
+    if (networkMonitor) {
+      networkMonitor.install(context);
+      monitorsByContext.set(context, networkMonitor);
+    }
+
+    for (const def of routes) await context.route(def.pattern, def.handler);
+
+    // With a flow-owned handler every popup goes through it (below, on the
+    // first page) and neither default mechanism is used.
+    const cssSelectors = handler
+      ? []
+      : popups.flatMap((def) =>
+          def.cssSelector === undefined ? [] : [def.cssSelector],
+        );
+    if (cssSelectors.length > 0)
+      await context.addInitScript(buildPopupShieldInitScript(cssSelectors));
+
+    const perPage = handler
+      ? []
+      : popups.filter((def) => def.cssSelector === undefined);
+
+    // Every page the context produces gets the per-page fallbacks. The first
+    // page is awaited below; later ones install in the background, where an
+    // unhandled rejection — a popup window closed before its hooks landed —
+    // must not take the process down.
+    const preparing = new WeakMap<Page, Promise<void>>();
+    context.on("page", (page) => {
+      const prepared = installLocatorHandlers(page, perPage);
+      preparing.set(page, prepared);
+      prepared.catch(() => undefined);
+    });
+
+    const page = await context.newPage();
+    await (preparing.get(page) ?? installLocatorHandlers(page, perPage));
+
+    if (handler) {
+      handler.install(page);
+      for (const def of popups)
+        await handler.add(def.name, def.trigger(page), () => def.dismiss(page));
+    }
+
+    return page;
+  }
+
+  /**
+   * Popups to dismiss on every page of every browser this entry point
+   * launches. Override to declare them; extend a parent entry point's with
+   * `[...super.popupHandlers(), ...]`. Static because they are installed on
+   * the browser context before its first page exists, so they hold no page
+   * of their own — see `PopupHandlerDef`. A flow adjusts the declared set
+   * through `PageHookOptions`.
+   */
+  protected static popupHandlers(): PopupHandlerDef[] {
+    return [];
+  }
+
+  /**
+   * Routes to intercept on every page of every browser this entry point
+   * launches. Declared and adjusted the same way as `popupHandlers`.
+   */
+  protected static routeInterceptors(): RouteInterceptorDef[] {
+    return [];
   }
 
   /** Close the browser that owns this page, swallowing teardown failures. */
@@ -94,66 +272,15 @@ export abstract class EntryPointPageObject extends BasePageObject {
       ...options,
     });
   }
-
-  // Concrete entry points define `static async create()` using `initializeBrowser`,
-  // `new this(page)`, and `installPageHooks`.
-
-  /**
-   * Install all page hooks. Call before goto().
-   *
-   * Hook defs come from the page registry — every POM that overrode
-   * `popupHandlers()` or `routeInterceptors()` on its class contributes
-   * here, not just the entry point. See `pageHookCollection.ts` for the
-   * auto-detection mechanism.
-   */
-  protected async installPageHooks(options?: PageSetupOptions): Promise<void> {
-    const skipPopups = new Set(options?.allowPopups);
-    const skipRoutes = new Set(options?.allowRoutes);
-
-    const popupGroups = await getRegisteredPopupHandlers(this.page);
-    const routeGroups = await getRegisteredRouteInterceptors(this.page);
-    assertUniqueHookNames(popupGroups, "popup");
-    assertUniqueHookNames(routeGroups, "route");
-
-    const popupDefs = popupGroups.flatMap((g) => g.defs);
-    const routeDefs = routeGroups.flatMap((g) => g.defs);
-
-    if (options?.handler) {
-      options.handler.install(this.page);
-      for (const def of popupDefs) {
-        if (skipPopups.has(def.name)) continue;
-        await options.handler.add(def.name, def.trigger, def.dismiss);
-      }
-    } else {
-      const cssSelectors: string[] = [];
-      for (const def of popupDefs) {
-        if (skipPopups.has(def.name)) continue;
-        if (def.cssSelector) cssSelectors.push(def.cssSelector);
-        // A popup without a cssSelector cannot use the CSS-injection shield, so
-        // it falls back to addLocatorHandler. In default mode the shield is
-        // preferred because addLocatorHandler deadlocks when multiple overlays
-        // stack — each handler waits for the action pipeline, blocking all
-        // locator operations (evaluate, count, screenshot).
-        else {
-          await this.page.addLocatorHandler(def.trigger, async () => {
-            await def.dismiss();
-          });
-        }
-      }
-      if (cssSelectors.length > 0)
-        await this.page.addInitScript(buildPopupShieldInitScript(cssSelectors));
-    }
-
-    for (const routeDef of routeDefs) {
-      if (skipRoutes.has(routeDef.name)) continue;
-      await this.page.route(routeDef.pattern, routeDef.handler);
-    }
-
-    if (options?.monitor) options.monitor.install(this.page);
-  }
 }
 
-export type InitializeBrowserOptions = {
+/**
+ * How to launch the browser, and how this flow adjusts the entry point's
+ * declared page hooks.
+ */
+export type InitializeBrowserOptions = BrowserLaunchOptions & PageHookOptions;
+
+type BrowserLaunchOptions = {
   args?: string[];
   browser?: "chrome" | "chromium" | "firefox" | "msedge" | "webkit";
   channel?: string;
