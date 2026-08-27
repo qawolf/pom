@@ -1,8 +1,9 @@
-import type { Page } from "playwright";
+import type { BrowserContext, Page } from "playwright";
 
 import { launch } from "@qawolf/flows/web";
 
 import { BasePageObject } from "./basePageObject.js";
+import { NetworkMonitor } from "./networkMonitor.js";
 import type {
   PageHookOptions,
   PopupHandlerDef,
@@ -92,7 +93,33 @@ async function installLocatorHandlers(
   }
 }
 
+/**
+ * The monitor `initializeBrowser` installed on each context, for the entry
+ * point constructed on one of its pages to hand back. Keyed by context rather
+ * than stored on the instance because the static initializer runs before any
+ * instance exists.
+ */
+const monitorsByContext = new WeakMap<BrowserContext, NetworkMonitor>();
+
 export abstract class EntryPointPageObject extends BasePageObject {
+  /**
+   * The `NetworkMonitor` recording every 4xx/5xx response in this browser
+   * context — the first page, a second tab, a popup window alike. Owned by
+   * the entry point unless the flow passed its own `monitor`; throws if the
+   * browser was launched with `monitor: false`.
+   */
+  get networkMonitor(): NetworkMonitor {
+    const monitor = monitorsByContext.get(this.page.context());
+    if (!monitor) {
+      throw Error(
+        `${this.constructor.name} has no NetworkMonitor: the browser was ` +
+          `launched with { monitor: false }, or its page did not come from ` +
+          `initializeBrowser.`,
+      );
+    }
+    return monitor;
+  }
+
   // Concrete entry points define `static async create(options)` as
   // `new this(await this.initializeBrowser(options))`, plus whatever else
   // their first page needs — a `goto`, a sign-in.
@@ -104,8 +131,9 @@ export abstract class EntryPointPageObject extends BasePageObject {
    * precedes the first page, so no navigation can get ahead of the
    * CSS-injection shield.
    *
-   * The flow-owned `handler` and `monitor` are one-per-page objects and bind
-   * to the first page only.
+   * Network errors are recorded per context too — see `networkMonitor`. The
+   * flow-owned `handler` is a one-per-page object and binds to the first page
+   * only.
    */
   protected static async initializeBrowser(
     options: InitializeBrowserOptions = {},
@@ -145,6 +173,16 @@ export abstract class EntryPointPageObject extends BasePageObject {
 
     const { context } = launchResult;
 
+    // Default on: recording is one listener and an array, and asserting
+    // stays the flow's choice. `null` is what existing flow code passes for
+    // "none", so it reads as `false`.
+    const networkMonitor =
+      monitor === undefined ? new NetworkMonitor(this.name) : monitor || null;
+    if (networkMonitor) {
+      networkMonitor.install(context);
+      monitorsByContext.set(context, networkMonitor);
+    }
+
     for (const def of routes) await context.route(def.pattern, def.handler);
 
     // With a flow-owned handler every popup goes through it (below, on the
@@ -180,8 +218,6 @@ export abstract class EntryPointPageObject extends BasePageObject {
       for (const def of popups)
         await handler.add(def.name, def.trigger(page), () => def.dismiss(page));
     }
-
-    if (monitor) monitor.install(page);
 
     return page;
   }

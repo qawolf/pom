@@ -55,9 +55,12 @@ export type PageHookOptions = {
   /** Flow-owned popup handler. Every popup is registered through it on the
    *  entry point's page, and the CSS-injection shield stays out of the way. */
   handler?: PopupHandler;
-  /** Flow-owned network monitor, installed on the entry point's page. `null`
-   *  stays accepted because existing flow code passes `monitor: null`. */
-  monitor?: NetworkMonitor | null;
+  /** Network error tracking. By default the entry point owns a
+   *  `NetworkMonitor` bound to the browser context, reachable as
+   *  `entry.networkMonitor`. Pass `false` to turn it off (`null` stays
+   *  accepted because existing flow code passes `monitor: null`), or a
+   *  `NetworkMonitor` of the flow's own to have that one installed instead. */
+  monitor?: NetworkMonitor | false | null;
   /** Popups for this flow only, on top of the entry point's. */
   popupHandlers?: PopupHandlerDef[];
   /** Route interceptors for this flow only, on top of the entry point's. */

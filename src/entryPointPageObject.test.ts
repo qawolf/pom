@@ -1,16 +1,27 @@
 import { describe, expect, it, jest } from "@jest/globals";
-import type { Browser, BrowserContext, Locator, Page, Route } from "playwright";
+import type {
+  Browser,
+  BrowserContext,
+  Locator,
+  Page,
+  Response,
+  Route,
+} from "playwright";
 
 import type { InitializeBrowserOptions } from "./entryPointPageObject.js";
-import type { NetworkMonitor } from "./networkMonitor.js";
 import type { PopupHandlerDef, RouteInterceptorDef } from "./pageHooks.js";
 import { PopupHandler } from "./popupHandler.js";
 
 const launch = jest.fn<(options: unknown) => Promise<unknown>>();
 
-jest.unstable_mockModule("@qawolf/flows/web", () => ({ launch }));
+// `expect` is what NetworkMonitor imports from the same module.
+jest.unstable_mockModule("@qawolf/flows/web", () => ({
+  expect: () => undefined,
+  launch,
+}));
 
 const { EntryPointPageObject } = await import("./entryPointPageObject.js");
+const { NetworkMonitor } = await import("./networkMonitor.js");
 
 function pageWithBrowser(browser: Browser | null): Page {
   return {
@@ -32,7 +43,23 @@ function makeFakeContext() {
   const initScripts: string[] = [];
   const listeners: ((page: Page) => void)[] = [];
   const pages: FakePage[] = [];
+  const responseListeners: ((response: Response) => void)[] = [];
   const routes: string[] = [];
+
+  /** A response from any page of the context, as the context reports it. */
+  function respond(status: number, url: string): void {
+    const response = {
+      request: () => ({ method: () => "GET", resourceType: () => "fetch" }),
+      status: () => status,
+      statusText: () => "status",
+      url: () => url,
+    } as unknown as Response;
+    for (const listener of responseListeners) listener(response);
+  }
+
+  // Declared before `openPage` closes over it; assigned below.
+  // eslint-disable-next-line prefer-const -- assigned once the object literal exists
+  let context: BrowserContext;
 
   /** A page the context produced — the first one, or a window the app opens. */
   function openPage(): FakePage {
@@ -41,9 +68,7 @@ function makeFakeContext() {
       async addLocatorHandler(trigger: Locator) {
         locatorHandlerTriggers.push(trigger);
       },
-      on() {
-        return page;
-      },
+      context: () => context,
     } as unknown as Page;
     const record = { locatorHandlerTriggers, page };
     pages.push(record);
@@ -51,7 +76,7 @@ function makeFakeContext() {
     return record;
   }
 
-  const context = {
+  context = {
     async addInitScript(script: string) {
       events.push("addInitScript");
       initScripts.push(script);
@@ -60,8 +85,13 @@ function makeFakeContext() {
       events.push("newPage");
       return openPage().page;
     },
-    on(_event: "page", listener: (page: Page) => void) {
-      listeners.push(listener);
+    on(
+      event: string,
+      listener: ((page: Page) => void) | ((response: Response) => void),
+    ) {
+      if (event === "page") listeners.push(listener as (page: Page) => void);
+      if (event === "response")
+        responseListeners.push(listener as (response: Response) => void);
     },
     async route(pattern: string) {
       events.push("route");
@@ -72,7 +102,7 @@ function makeFakeContext() {
   launch.mockReset();
   launch.mockResolvedValue({ browser: {}, context });
 
-  return { events, initScripts, openPage, pages, routes };
+  return { events, initScripts, openPage, pages, respond, routes };
 }
 
 function popupDef(name: string, cssSelector?: string): PopupHandlerDef {
@@ -425,23 +455,45 @@ describe("[CI] initializeBrowser — flow-owned objects", () => {
     expect(handler.registered).toHaveLength(0);
   });
 
-  it("installs a flow-owned monitor on the first page", async () => {
-    const install = jest.fn<(page: Page) => void>();
-    const monitor = { install } as unknown as NetworkMonitor;
-    const { pages } = makeFakeContext();
+  it("records every page's network errors on one entry-point-owned monitor", async () => {
+    const { respond } = makeFakeContext();
 
-    await ShopEntry.create({ monitor });
+    const entry = await ShopEntry.create();
+    respond(200, "https://app.example/ok");
+    respond(404, "https://app.example/missing");
+    respond(503, "https://app.example/popup-window/api");
 
-    expect(install.mock.calls[0]?.[0]).toBe(pages[0]?.page);
+    expect(entry.networkMonitor.errors.map((error) => error.status)).toEqual([
+      404, 503,
+    ]);
+    expect(entry.networkMonitor.serverErrors).toHaveLength(1);
+  });
+
+  it("installs a flow-owned monitor on the context instead", async () => {
+    const monitor = new NetworkMonitor("main");
+    const { respond } = makeFakeContext();
+
+    const entry = await ShopEntry.create({ monitor });
+    respond(500, "https://app.example/api");
+
+    expect(entry.networkMonitor).toBe(monitor);
+    expect(monitor.serverErrors).toHaveLength(1);
+  });
+
+  it("turns the monitor off with monitor: false", async () => {
+    makeFakeContext();
+
+    const entry = await ShopEntry.create({ monitor: false });
+
+    expect(() => entry.networkMonitor).toThrow("has no NetworkMonitor");
   });
 
   it("accepts monitor: null, which existing flow code passes explicitly", async () => {
     const { pages } = makeFakeContext();
 
-    await expect(ShopEntry.create({ monitor: null })).resolves.toBeInstanceOf(
-      ShopEntry,
-    );
+    const entry = await ShopEntry.create({ monitor: null });
 
+    expect(() => entry.networkMonitor).toThrow("has no NetworkMonitor");
     expect(triggerNames(pages[0])).toEqual(["pendo-tour"]);
   });
 });

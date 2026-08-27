@@ -188,9 +188,23 @@ await LoginPage.create({
 `allowPopups` / `allowRoutes` skip declared hooks by name, or all of them with
 `"all"`; `popupHandlers` / `routeInterceptors` add the flow's own, a same-named
 one replacing the declared one. A flow-owned `PopupHandler` (`handler`) takes
-over every popup on the entry point's page, and a flow-owned `NetworkMonitor`
-(`monitor`) is installed there; both are one-per-page objects, so they cover
-the first page only.
+over every popup on the entry point's page; it is a one-per-page object, so it
+covers the first page only.
+
+### Network errors
+
+Every browser an entry point launches records its 4xx/5xx responses — from
+the first page, a second tab, a popup window alike — on a `NetworkMonitor`
+bound to the browser context. Asserting is the flow's choice:
+
+```ts
+const login = await LoginPage.create();
+// ...
+login.networkMonitor.assertClean({ exclude: [/analytics/] });
+```
+
+Pass `monitor: false` to `create()` to turn recording off for a flow, or a
+`NetworkMonitor` of the flow's own to have that one installed instead.
 
 ### Migrating from the page registry
 

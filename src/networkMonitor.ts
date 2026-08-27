@@ -1,4 +1,4 @@
-import type { Page, Response } from "playwright";
+import type { Response } from "playwright";
 
 import { expect } from "@qawolf/flows/web";
 
@@ -9,6 +9,11 @@ export type NetworkError = {
   readonly statusText: string;
   readonly timestamp: number;
   readonly url: string;
+};
+
+/** What both a `BrowserContext` and a `Page` offer: a `response` event. */
+export type ResponseSource = {
+  on(event: "response", listener: (response: Response) => void): unknown;
 };
 
 export class NetworkMonitor {
@@ -29,7 +34,7 @@ export class NetworkMonitor {
 
   private _errors: NetworkError[] = [];
 
-  private _page: Page | undefined = undefined;
+  private _installed = false;
 
   constructor(name: string) {
     this.name = name;
@@ -61,19 +66,21 @@ export class NetworkMonitor {
     ).toHaveLength(0);
   }
 
-  /** Bind to a page. Throws if already bound — one monitor per page. */
-  install(page: Page): void {
-    if (this._page) {
+  /**
+   * Record every 4xx/5xx response `source` emits. `initializeBrowser` binds
+   * the monitor to the browser context, so every page the context produces --
+   * a second tab, a popup window -- is covered by the one monitor. A single
+   * page works too. Throws if already installed: one monitor, one source.
+   */
+  install(source: ResponseSource): void {
+    if (this._installed) {
       throw Error(
-        `NetworkMonitor "${this.name}" is already tracking a page. ` +
-          `Each monitor tracks exactly one page handle. For multi-page ` +
-          `sessions, create a separate NetworkMonitor per page:\n\n` +
-          `  const main      = new NetworkMonitor("main");\n` +
-          `  const secondary = new NetworkMonitor("secondary");`,
+        `NetworkMonitor "${this.name}" is already installed. One monitor ` +
+          `records one browser context (or page); create another for a second.`,
       );
     }
-    this._page = page;
-    page.on("response", (response: Response) => {
+    this._installed = true;
+    source.on("response", (response: Response) => {
       if (response.status() >= 400) {
         this._errors.push({
           method: response.request().method(),
