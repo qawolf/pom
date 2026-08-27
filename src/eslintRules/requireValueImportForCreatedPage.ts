@@ -38,7 +38,7 @@ export const requireValueImportForCreatedPageRule: PomLintRule = {
           const name = createdPageName(node);
           if (!name) return;
 
-          const binding = importBinding(name, context.getSourceCode().ast);
+          const binding = importBinding(name, context.sourceCode.ast);
           if (!binding?.isTypeOnly || !isPathSpecifier(binding.specifier))
             return;
 

@@ -90,6 +90,19 @@ So check the superclass: `BasePageObject`, `EntryPointPageObject` or
 variations you would expect — `abstract class`, `export default class`, and the
 generic `extends SubPageObject<Parent>`.
 
+The same goes for flows. A flow module is not "a file named `*.flow.ts`" but a
+file that imports `flow` from `@qawolf/flows` (any subpath) or default-exports
+a `flow(...)` call.
+
+Both checks live in shared helpers, so a new rule does not re-derive them:
+`pageObjects.ts` (`enclosingPageObject`, `enclosingClassMember`,
+`isLocatorHolder`, `memberName`) and `flowModules.ts` (`isFlowModule`,
+`isInsideFlowCallback`). A rule scoped to page objects calls
+`enclosingPageObject(node)` per report; one scoped to flows checks
+`isFlowModule(context.sourceCode.ast)` once in `create()` and returns `{}`
+when it is not one. `testSupport.ts` has the matching source-text builders for
+`RuleTester` cases.
+
 **Where this approach stops.** A page object that extends _another page object_
 names neither base class, so a superclass check does not match it:
 

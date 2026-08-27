@@ -9,5 +9,10 @@
     "rootDir": "src"
   },
   "include": ["src/**/*.ts", "src/**/*.tsx"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/**/*.type-test.ts"]
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/*.type-test.ts",
+    "src/eslintRules/testSupport.ts"
+  ]
 }

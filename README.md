@@ -224,6 +224,129 @@ To move a workspace off `register-pages.ts`:
 - Flow code that called `createPage("Name", page)` gets its page objects from
   methods on the entry point instead.
 
+## Lint rules
+
+`@qawolf/pom/eslint-rules` ships ESLint rules for code written against this
+package. They are plain AST rules: they run under ESLint 8, 9 and 10, need no
+type information, and have no autofixes — each message says what to change and
+why.
+
+```js
+// eslint.config.js
+import { pomRuleModules, pomRuleSeverities } from "@qawolf/pom/eslint-rules";
+import tsParser from "@typescript-eslint/parser";
+
+// Rules are keyed by their full id ("@qawolf/pom/<rule>"); a flat-config
+// plugin wants the bare name.
+const pomPlugin = {
+  rules: Object.fromEntries(
+    Object.entries(pomRuleModules).map(([id, rule]) => [
+      id.replace("@qawolf/pom/", ""),
+      rule,
+    ]),
+  ),
+};
+
+export default [
+  {
+    files: ["src/**/*.ts"],
+    languageOptions: { parser: tsParser },
+    plugins: { "@qawolf/pom": pomPlugin },
+    rules: pomRuleSeverities,
+  },
+];
+```
+
+`pomRuleSeverities` holds each rule's recommended level; override an entry after
+the spread to re-grade or turn a rule off.
+
+### How a rule finds its subject
+
+A rule recognises what it checks from the code, not from the file path, so a
+workspace laid out differently is still covered and nothing is silently
+skipped:
+
+- A **page object** is a class whose superclass is `BasePageObject`,
+  `SubPageObject` or `EntryPointPageObject`. A page object that extends
+  _another page object_ is not recognised — following that chain needs type
+  information.
+- A **flow** is a module that imports `flow` from `@qawolf/flows` (any subpath)
+  or default-exports a `flow(...)` call. The `.flow.ts` name is not the signal.
+
+A file that is neither is not checked, except by the rules marked _anywhere_.
+
+### The rules
+
+The flow / page-object boundary:
+
+| Rule                      | Level | Reports                                                                         |
+| ------------------------- | ----- | ------------------------------------------------------------------------------- |
+| `no-raw-page-in-flows`    | error | `page.goto()`, `page.click()`, … in a flow — drive the app through page objects |
+| `no-selectors-in-flows`   | error | `locator()` / `getBy*()` / `frameLocator()` in a flow, on any receiver          |
+| `no-expect-in-flows`      | warn  | `expect()` in a flow, rather than an `assert*()` page-object method             |
+| `no-fetch-axios-in-flows` | error | `fetch()` or an `axios` import in a flow                                        |
+| `no-any-shared-state`     | error | a `let` inside the flow callback typed `any`, or not typed at all               |
+
+Page objects:
+
+| Rule                                    | Level | Reports                                                                           |
+| --------------------------------------- | ----- | --------------------------------------------------------------------------------- |
+| `assert-expect-pairing`                 | error | `expect()` in a page-object method not named `assert*`                            |
+| `no-inline-locator-in-page-object`      | warn  | a locator built from `this.page` outside the `locators` map                       |
+| `locator-getter-shape`                  | error | a `locators` map that is public, or a method rather than a getter                 |
+| `require-locator-jsdoc`                 | warn  | an entry in the `locators` map with no `/** … */` above it                        |
+| `no-legacy-selectors`                   | error | XPath, a `css=` / `text=` / `id=` prefix, or a `>>` chain in a `locator()` string |
+| `no-wait-for-timeout`                   | error | `waitForTimeout()` / `waitForSelector()` in a page object or a flow               |
+| `prefer-web-first-assertion`            | warn  | `expect(await locator.isVisible()).toBe(true)` and its siblings — _anywhere_      |
+| `no-mutable-state-in-page-object`       | warn  | an instance field that is not `readonly`                                          |
+| `no-page-object-constructor`            | error | a constructor on a page object                                                    |
+| `require-page-object-base-class`        | warn  | a class with a `locators` map that extends nothing                                |
+| `entry-point-factory`                   | error | an `EntryPointPageObject` subclass with no `static create()`                      |
+| `require-value-import-for-created-page` | error | `this.create("Name")` where `Name` is bound by a type-only import                 |
+
+`warn` marks a convention rather than a defect. A pre-commit hook that runs
+`eslint --max-warnings 0` turns warnings into blockers; if a workspace is not
+ready for one, turn it `"off"` in the config rather than disabling it at each
+site.
+
+### Migrating from a vendored `eslint-plugin-qaw-pom`
+
+Workspaces that carried `tools/eslint-plugin-qaw-pom` should delete it. Three of
+its rules contradict 0.6.0 — `no-direct-pom-construction` (there is no
+registry), `no-pom-value-import` (a type-only import is exactly what
+`require-value-import-for-created-page` forbids) and `typed-create-return`
+(`this.create(Class)` infers the type) — and the ones that still apply ship
+here. ESLint reports a disable directive naming an unknown rule as an error
+carrying that rule's id, so also remove every `eslint-disable` comment for a
+`qaw-pom/*` rule.
+
+Renamed on the way in:
+
+| `qaw-pom/…`                                          | `@qawolf/pom/…`                   |
+| ---------------------------------------------------- | --------------------------------- |
+| `no-wait-for-timeout`, `no-wait-for-timeout-in-poms` | `no-wait-for-timeout`             |
+| `selector-getter-shape`                              | `locator-getter-shape`            |
+| `selector-jsdoc`                                     | `require-locator-jsdoc`           |
+| `no-mutable-state-in-pom`                            | `no-mutable-state-in-page-object` |
+| `no-public-constructor`                              | `no-page-object-constructor`      |
+| `correct-base-class`                                 | `require-page-object-base-class`  |
+| `web-first-assertions`                               | `prefer-web-first-assertion`      |
+
+Not carried over: `no-this-page-in-property-initializers` (its premise is wrong
+— `this.page` is assigned by the base constructor before a subclass's field
+initializers run, so `private readonly locators = { … this.page … }` is fine
+and accepted by `no-inline-locator-in-page-object`); `no-non-null-assertion`
+and `no-parameter-properties` (general TypeScript hygiene —
+`@typescript-eslint/no-non-null-assertion` and `erasableSyntaxOnly` in
+`tsconfig.json` cover them); `require-env-pattern`, `file-naming-convention`,
+`flow-export-structure`, `no-code-between-steps`, `test-aaa-comments` and
+`aaa-banner-format` (QA Wolf workspace and flow-authoring conventions with no
+page-object content); and the injected-context migration guards
+(`no-platform-context-injection`, `no-context-capabilities`,
+`no-context-helper`, `no-legacy-env-var`, `no-legacy-inbox`, `no-legacy-otp`,
+`no-wdio-injection`), which guard the `@qawolf/flows` API rather than this
+package.
+
 ## Platform integration
 
 `@qawolf/pom` is designed to run on the QA Wolf platform, and a few of its
