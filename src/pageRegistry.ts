@@ -5,10 +5,12 @@
  * `getRegisteredPopupHandlers` / `getRegisteredRouteInterceptors`.
  *
  * Constructing by name is one of two options — a page object can equally
- * import a sibling and call `createFromPage` on it. Hook installation has no
- * such alternative: it walks the registry, so a POM that declares
- * `popupHandlers()` or `routeInterceptors()` needs an entry here however its
- * instances get built.
+ * import a sibling and call `createFromPage` on it. Hook installation has two
+ * alternatives as well: an entry point contributes its own hooks without
+ * registering itself, and any POM class named in `PageSetupOptions.pageHooks`
+ * contributes by value import. The registry remains the right answer when a
+ * name is all the caller has, or when the module should stay out of the
+ * caller's import graph until first use.
  *
  * Registration is eager (`registerPage("LoginPage", LoginPage)`) or lazy
  * (`registerPage("LoginPage", () => import("../pages/login-page.ts"))`). A
@@ -28,15 +30,19 @@ import {
   importPageModule,
 } from "./pageModuleResolution.js";
 
-type RegistrablePage = {
+// Exported for the sibling page-hook collector, which reads hook defs off
+// instances it did not construct.
+export type RegistrablePage = {
   popupHandlers(): PopupHandlerDef[];
   routeInterceptors(): RouteInterceptorDef[];
 };
 
-// Exported for the sibling page-hook collector; not part of the package's
-// public API (see index.ts).
+// Public: a workspace names these classes in `PageSetupOptions.pageHooks` to
+// contribute page hooks without registering them (see index.ts).
 export type PomClass = {
   createFromPage(page: Page): RegistrablePage;
+  /** The class name, used to attribute a hook in duplicate-name errors. */
+  name: string;
   prototype: RegistrablePage;
 };
 

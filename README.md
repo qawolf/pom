@@ -131,12 +131,42 @@ under that name.
 
 Registration always takes precedence, and a page resolved this way is not part
 of the registry, so its `popupHandlers()` and `routeInterceptors()` are not
-collected by `installPageHooks()`.
+collected by `installPageHooks()`. Contribute them explicitly instead — see
+[Contributing page hooks](#contributing-page-hooks) below.
 
-Register a page object even when nothing constructs it by name if it declares
-`popupHandlers()` or `routeInterceptors()` — `installPageHooks()` finds those
-by walking the registry, and an unregistered page object's hooks never
-install.
+### Contributing page hooks
+
+`installPageHooks()` collects `popupHandlers()` and `routeInterceptors()` from
+three sources:
+
+1. **The page registry** — every registered POM that declares either override.
+2. **The entry point itself** — a concrete `EntryPointPageObject` contributes
+   its own overrides without registering itself.
+3. **`PageSetupOptions.pageHooks`** — POM classes contributed by value import:
+
+   ```ts
+   await this.installPageHooks({ ...options, pageHooks: [ActivityLogPage] });
+   ```
+
+Pass classes, not instances: the package binds each one to the entry point's
+Playwright `page` via `createFromPage`, exactly as a registered class is bound.
+
+A workspace can therefore install hooks with no `register-pages.ts` at all. The
+registry remains fully supported and is still the right answer when a name is
+all the caller has, or when a POM's module should stay out of the caller's
+import graph until first use — register a page object even when nothing
+constructs it by name if it declares hooks and you are relying on the registry
+to find them.
+
+Whichever source a def arrives from, the rest of installation is identical: the
+CSS-injection popup shield, the `addLocatorHandler` fallback, the `allowPopups`
+/ `allowRoutes` skips, and the duplicate-hook-name guard all behave the same.
+
+A class reached by more than one source contributes exactly once — dedupe is by
+class identity, so a workspace that registers its entry point _and_ gets the
+entry point's automatic self-contribution does not install its hooks twice.
+Inherited-only overrides do not contribute: declare `popupHandlers()` /
+`routeInterceptors()` directly on the class that owns the popup or route.
 
 ## Platform integration
 

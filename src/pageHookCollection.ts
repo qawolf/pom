@@ -32,26 +32,43 @@ async function resolveHookBearingClasses(): Promise<
   return resolved.filter((entry) => entry !== undefined);
 }
 
+/**
+ * A class's hook defs, tagged with the class itself.
+ *
+ * `cls` is what lets `installPageHooks` merge these groups with hooks the
+ * entry point declares on itself and hooks contributed through
+ * `PageSetupOptions.pageHooks`: a class reached by two routes must contribute
+ * once, and identity is the only reliable key — two registrations can share a
+ * class, and a registered name need not match `cls.name`.
+ */
+export type HookGroup<TDef> = {
+  className: string;
+  cls: PomClass;
+  defs: TDef[];
+};
+
 export async function getRegisteredPopupHandlers(
   page: Page,
-): Promise<{ className: string; defs: PopupHandlerDef[] }[]> {
+): Promise<HookGroup<PopupHandlerDef>[]> {
   const hookBearing = await resolveHookBearingClasses();
   return hookBearing
     .filter(({ cls }) => Object.hasOwn(cls.prototype, "popupHandlers"))
     .map(({ cls, name }) => ({
       className: name,
+      cls,
       defs: cls.createFromPage(page).popupHandlers(),
     }));
 }
 
 export async function getRegisteredRouteInterceptors(
   page: Page,
-): Promise<{ className: string; defs: RouteInterceptorDef[] }[]> {
+): Promise<HookGroup<RouteInterceptorDef>[]> {
   const hookBearing = await resolveHookBearingClasses();
   return hookBearing
     .filter(({ cls }) => Object.hasOwn(cls.prototype, "routeInterceptors"))
     .map(({ cls, name }) => ({
       className: name,
+      cls,
       defs: cls.createFromPage(page).routeInterceptors(),
     }));
 }
