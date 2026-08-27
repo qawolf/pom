@@ -49,7 +49,7 @@ export const requireValueImportForCreatedPageRule: PomLintRule = {
     meta: {
       messages: {
         typeOnlyImport:
-          '`{{name}}` is bound by a type-only import, which compilation erases. `create("{{name}}")` resolves the name by reading this file\'s imports at runtime, so on the cloud runner the compiled file no longer says where `{{name}}` lives and the call throws `Unknown page`. Drop the `type` keyword — a value import survives compilation — or construct the page directly with `new {{name}}(page)`.',
+          '`{{name}}` is bound by a type-only import, which compilation erases. `create("{{name}}")` resolves the name by reading this file\'s imports at runtime, so on the cloud runner the compiled file no longer says where `{{name}}` lives and the call throws `Unknown page`. Drop the `type` keyword — a value import survives compilation — or pass the class instead: `this.create({{name}})`.',
       },
     },
   },
@@ -60,11 +60,10 @@ export const requireValueImportForCreatedPageRule: PomLintRule = {
 };
 
 /**
- * The page name a call creates: `this.create("X")` (including the annotated
- * `this.create<X>("X")`, where the string argument is what resolves) and the
- * free function `createPage("X", page)`, which shares the same caller-source
- * resolution. Only a literal name can be checked against the imports; a
- * variable is left alone.
+ * The page name a call creates: `this.create("X")`, including the annotated
+ * `this.create<X>("X")`, where the string argument is what resolves. Only a
+ * literal name can be checked against the imports; a variable is left alone,
+ * and so is the class form `this.create(X)`, which tsc already polices.
  */
 function createdPageName(node: Rule.Node): string | undefined {
   if (node.type !== "CallExpression") return undefined;
@@ -80,10 +79,8 @@ function createdPageName(node: Rule.Node): string | undefined {
     callee.object.type === "ThisExpression" &&
     callee.property.type === "Identifier" &&
     callee.property.name === "create";
-  const isCreatePage =
-    callee.type === "Identifier" && callee.name === "createPage";
 
-  return isThisCreate || isCreatePage ? first.value : undefined;
+  return isThisCreate ? first.value : undefined;
 }
 
 /** `importKind` comes from the TypeScript parser; estree does not model it. */

@@ -1,9 +1,8 @@
 # @qawolf/pom
 
 `@qawolf/pom` is a TypeScript toolkit for building Page Object Models (POMs) on
-top of Playwright: base classes for page objects, a registry that constructs
-page objects by name and collects their page hooks, and automatic popup and
-route-hook installation.
+top of Playwright: base classes for page objects, construction of sibling page
+objects by class or by name, and automatic popup and route-hook installation.
 
 It is built for and maintained as part of the [QA Wolf](https://www.qawolf.com)
 platform, and it is the foundation the POMs in QA Wolf workspaces are generated
@@ -90,25 +89,8 @@ value.
 
 ### Constructing by name
 
-A page object can also be built from its registered name, which keeps its
-module out of the calling file's import graph until the first construction.
-
-```ts
-import { createPage, registerPage } from "@qawolf/pom";
-
-registerPage("LoginPage", () => import("./pages/login-page.js"));
-
-const loginPage = await createPage("LoginPage", page);
-```
-
-Inside a page object the same lookup is `await this.create("DashboardPage")`;
-annotate the call — `this.create<DashboardPage>("DashboardPage")` — for the
-return type when the name is not in `RegisteredPages`. Register the module for
-its side effects before constructing anything.
-
-A name that was never registered is resolved through the calling file's own
-imports, so page objects can construct each other by name in a workspace with no
-registry at all:
+A page object can also be built from its class name, resolved through the
+calling file's own imports:
 
 ```ts
 import { BasePageObject } from "@qawolf/pom";
@@ -116,57 +98,78 @@ import { BasePageObject } from "@qawolf/pom";
 import { DashboardPage } from "../primary/dashboard-page.js";
 
 export class LoginPage extends BasePageObject {
-  async signIn(): Promise<DashboardPage> {
-    return this.create("DashboardPage");
+  async signIn() {
+    return this.create<DashboardPage>("DashboardPage");
   }
 }
 ```
 
 The import must be a value import: the specifier is read from the executing
 file's source, and compilation erases a type-only import, so on the QA Wolf
-runner a `import type` binding leaves nothing to resolve through (the
+runner an `import type` binding leaves nothing to resolve through (the
 `require-value-import-for-created-page` lint rule catches this at edit time).
 A name that no import binds does not resolve. The module must export the class
-under that name.
+under that name. Annotate the call for a return type more specific than
+`BasePageObject` — and note that nothing checks the annotation and the name
+agree, which is the other reason to prefer passing the class.
 
-Registration always takes precedence, and a page resolved this way is not part
-of the registry, so its `popupHandlers()` and `routeInterceptors()` are not
-collected by `installPageHooks()`. Contribute them explicitly instead — see
-[Contributing page hooks](#contributing-page-hooks) below.
+`create` is deliberately `protected` and has no flow-facing counterpart: flow
+code never holds a Playwright `Page`, so it cannot construct page objects
+directly. A flow gets its first POM from an entry point's static `create()`,
+and every subsequent one from methods on POMs it already has.
 
-### Contributing page hooks
+### Page hooks
 
-`installPageHooks()` collects `popupHandlers()` and `routeInterceptors()` from
-three sources:
+A page object declares the popups it owns with `popupHandlers()`, and the
+routes it intercepts with `routeInterceptors()`. The entry point installs them:
+its own overrides are picked up automatically, and any other page object
+contributes by being named in `pageHooks`.
 
-1. **The page registry** — every registered POM that declares either override.
-2. **The entry point itself** — a concrete `EntryPointPageObject` contributes
-   its own overrides without registering itself.
-3. **`PageSetupOptions.pageHooks`** — POM classes contributed by value import:
+```ts
+import { EntryPointPageObject } from "@qawolf/pom";
 
-   ```ts
-   await this.installPageHooks({ ...options, pageHooks: [ActivityLogPage] });
-   ```
+import { ActivityLogPage } from "./pages/activity-log-page.js";
+
+export class LoginPage extends EntryPointPageObject {
+  static async create(options?: PageSetupOptions): Promise<LoginPage> {
+    const page = await this.initializeBrowser(options);
+    const entry = new this(page);
+    await entry.installPageHooks({ ...options, pageHooks: [ActivityLogPage] });
+    return entry;
+  }
+}
+```
 
 Pass classes, not instances: the package binds each one to the entry point's
-Playwright `page` via `createFromPage`, exactly as a registered class is bound.
+Playwright `page` via `createFromPage`.
 
-A workspace can therefore install hooks with no `register-pages.ts` at all. The
-registry remains fully supported and is still the right answer when a name is
-all the caller has, or when a POM's module should stay out of the caller's
-import graph until first use — register a page object even when nothing
-constructs it by name if it declares hooks and you are relying on the registry
-to find them.
+A page object whose hooks are neither declared on the entry point nor
+contributed through `pageHooks` never installs them — its popups simply stop
+being dismissed, with no error. Contributing the same class twice is safe:
+classes are deduped by identity.
 
 Whichever source a def arrives from, the rest of installation is identical: the
 CSS-injection popup shield, the `addLocatorHandler` fallback, the `allowPopups`
 / `allowRoutes` skips, and the duplicate-hook-name guard all behave the same.
 
-A class reached by more than one source contributes exactly once — dedupe is by
-class identity, so a workspace that registers its entry point _and_ gets the
-entry point's automatic self-contribution does not install its hooks twice.
-Inherited-only overrides do not contribute: declare `popupHandlers()` /
-`routeInterceptors()` directly on the class that owns the popup or route.
+Only overrides declared directly on a class count. A subclass that merely
+inherits `popupHandlers()` contributes nothing.
+
+### Migrating from the page registry
+
+`registerPage`, `createPage` and the `RegisteredPages` augmentation are gone.
+To move a workspace off `register-pages.ts`:
+
+- Delete `register-pages.ts`, including its `declare module "@qawolf/pom"`
+  block, and every import of it.
+- Where a page object calls `this.create("Name")`, import the class as a
+  value and pass it: `this.create(Name)`. The name form keeps working given a
+  value import, but a type-only one no longer resolves anywhere.
+- Where a page object declares `popupHandlers()` / `routeInterceptors()`,
+  list its class in the entry point's `installPageHooks({ pageHooks: [...] })`
+  — unless it is the entry point itself, which contributes automatically.
+- Flow code that called `createPage("Name", page)` gets its page objects from
+  methods on the entry point instead.
 
 ## Platform integration
 
@@ -191,9 +194,8 @@ Wolf run, including:
 | `AUTH_USERNAME`, `AUTH_PASSWORD`                                           | Optional HTTP basic-auth credentials applied at browser launch. |
 | `QAWOLF_RUN_ID`, `QAWOLF_SUITE_ID`, `QAWOLF_TEAM_ID`, `QAWOLF_WORKFLOW_ID` | Run metadata attached to cleanup failure reports.               |
 
-The core building blocks (`BasePageObject`, `SubPageObject`, the page registry
-via `registerPage` and `createPage`, and popup and route hooks) do not call the
-QA Wolf platform themselves. They still need `@qawolf/flows` to resolve, because
+The core building blocks (`BasePageObject`, `SubPageObject`, and popup and
+route hooks) do not call the QA Wolf platform themselves. They still need `@qawolf/flows` to resolve, because
 the package entry point re-exports `EntryPointPageObject` and `NetworkMonitor`,
 which import it.
 

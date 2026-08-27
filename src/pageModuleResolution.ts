@@ -1,5 +1,5 @@
 /**
- * Resolving a page name to a module, for workspaces with no `register-pages.ts`.
+ * Resolving a page name to a module.
  *
  * `this.create("SomePage")` names a class the calling file imports — `import
  * { SomePage } from "../primary/some-page.ts"` — so that file's own imports
@@ -15,9 +15,6 @@
  * the caller's own directory — rescuing almost nothing while turning every
  * erased or missing import into a "works if the file happens to sit here"
  * lottery — so it was removed rather than left to mask a missing import.
- *
- * This is the fallback path only: a registered name never reaches it, so
- * registration always wins.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, relative } from "node:path";

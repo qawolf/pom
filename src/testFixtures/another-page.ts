@@ -1,9 +1,5 @@
 import { BasePageObject } from "../basePageObject.js";
 
-// Gives resolution a candidate it could follow (the source text is what is
-// read, and here the .ts executes); the registry must still beat it (see
-// createOverride).
-import type { OverridePage } from "./override-page.js";
 import type { ImportedPage } from "./primary/imported-page.js";
 
 /**
@@ -17,11 +13,6 @@ import type { ImportedPage } from "./primary/imported-page.js";
 export class AnotherPage extends BasePageObject {
   async createMissingPage(): Promise<BasePageObject> {
     return this.create("NoSuchPage");
-  }
-
-  /** The value import above resolves this, but registration must win. */
-  async createOverride(): Promise<OverridePage> {
-    return this.create("OverridePage");
   }
 
   /** Resolved through the import above, which points outside this directory. */

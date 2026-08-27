@@ -36,9 +36,7 @@ src/
 ├── basePageObject.ts      # BasePageObject — core page-object base class
 ├── subPageObject.ts       # SubPageObject — page objects scoped to a region
 ├── entryPointPageObject.ts# EntryPointPageObject — browser launch + hook install (QA Wolf platform)
-├── pageRegistry.ts        # registerPage / createPage and the typed registry
 ├── pageHooks.ts           # Popup and route-interceptor hook definitions
-├── pageHookCollection.ts  # Collects hooks contributed by registered page objects
 ├── popupHandler.ts        # Popup dismissal via addLocatorHandler
 ├── popupShieldInitScript.ts # CSS-injection popup shield init script
 ├── networkMonitor.ts      # NetworkMonitor — collects network errors
@@ -49,7 +47,7 @@ src/
 └── eslintRules/           # Lint rules for page-object code (./eslint-rules export)
 ```
 
-The core building blocks (`BasePageObject`, `SubPageObject`, the page registry, popup/route hooks, and the network monitor) work with any Playwright project. `entryPointPageObject.ts`, `platformClient.ts`, and `cleanupUtils.ts` integrate with the QA Wolf platform — see the README for details.
+The core building blocks (`BasePageObject`, `SubPageObject`, popup/route hooks, and the network monitor) work with any Playwright project. `entryPointPageObject.ts`, `platformClient.ts`, and `cleanupUtils.ts` integrate with the QA Wolf platform — see the README for details.
 
 ## Writing a lint rule
 

@@ -1,9 +1,9 @@
 import type { Locator, Route } from "playwright";
 
+// Type-only, so the cycle with `basePageObject.ts` (which imports the hook
+// def types from here) is erased at runtime.
+import type { PomClass } from "./basePageObject.js";
 import type { NetworkMonitor } from "./networkMonitor.js";
-// Type-only, so the cycle with `pageRegistry.ts` (which imports the hook def
-// types from here) is erased at runtime.
-import type { PomClass } from "./pageRegistry.js";
 import type { PopupHandler } from "./popupHandler.js";
 
 /** Popup definition declared by the POM (what popups exist on this page). */

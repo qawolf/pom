@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from "@jest/globals";
+import { describe, expect, it, jest } from "@jest/globals";
 import type { Browser, Locator, Page, Route } from "playwright";
 
 import { BasePageObject } from "./basePageObject.js";
@@ -9,7 +9,6 @@ import type {
   PopupHandlerDef,
   RouteInterceptorDef,
 } from "./pageHooks.js";
-import { entries, registerPage } from "./pageRegistry.js";
 import { PopupHandler } from "./popupHandler.js";
 
 const launch = jest.fn<(options: unknown) => Promise<unknown>>();
@@ -183,22 +182,7 @@ class EntryWithRoutes extends TestEntryPoint {
   }
 }
 
-// The registry is module-global with no public reset, so each test starts from
-// an empty one rather than inheriting registrations from the test above it.
-beforeEach(() => {
-  for (const name of Object.keys(entries)) delete entries[name];
-});
-
-describe("[CI] installPageHooks — page registry compatibility", () => {
-  it("installs a registered POM's hooks when pageHooks is omitted", async () => {
-    registerPage("PendoTourPage", PendoTourPage);
-    const { locatorHandlerTriggers, page } = makeFakePage();
-
-    await new PlainEntry(page).install({});
-
-    expect(locatorHandlerTriggers).toEqual([{ name: "pendo-tour" }]);
-  });
-
+describe("[CI] installPageHooks — contributed classes", () => {
   it("binds a contributed class to the entry point's page", async () => {
     // Classes rather than instances, so the package — not the workspace —
     // decides which page a contributor's defs are read against.
@@ -239,12 +223,15 @@ describe("[CI] installPageHooks — page registry compatibility", () => {
     expect(locatorHandlerTriggers).toHaveLength(0);
   });
 
-  it("contributes once for a class that is also registered", async () => {
-    registerPage("PendoTourPage", PendoTourPage);
+  it("contributes once for a class listed twice", async () => {
+    // Contributing twice repeats every hook name, which
+    // `assertUniqueHookNames` would reject; dedupe is by class identity.
     const { locatorHandlerTriggers, page } = makeFakePage();
 
     await expect(
-      new PlainEntry(page).install({ pageHooks: [PendoTourPage] }),
+      new PlainEntry(page).install({
+        pageHooks: [PendoTourPage, PendoTourPage],
+      }),
     ).resolves.toBeUndefined();
 
     expect(locatorHandlerTriggers).toHaveLength(1);
@@ -263,7 +250,7 @@ describe("[CI] installPageHooks — page registry compatibility", () => {
 });
 
 describe("[CI] installPageHooks — entry point contributes its own hooks", () => {
-  it("installs hooks the entry point declares while unregistered", async () => {
+  it("installs hooks the entry point declares on itself", async () => {
     const { initScripts, page } = makeFakePage();
 
     await new EntryWithPopups(page).install();
@@ -274,14 +261,13 @@ describe("[CI] installPageHooks — entry point contributes its own hooks", () =
     expect(initScripts[0]).toContain("cookieconsent");
   });
 
-  it("installs a registered entry point's own hooks exactly once", async () => {
-    // The compatibility case: a workspace that already registers its entry
-    // point reaches the same class by both routes. Contributing twice repeats
-    // every hook name, which `assertUniqueHookNames` rejects.
-    registerPage("EntryWithPopups", EntryWithPopups);
+  it("installs the entry point's own hooks once when it is also in pageHooks", async () => {
+    // The same class reached by both routes must not contribute twice.
     const { initScripts, page } = makeFakePage();
 
-    await expect(new EntryWithPopups(page).install()).resolves.toBeUndefined();
+    await expect(
+      new EntryWithPopups(page).install({ pageHooks: [EntryWithPopups] }),
+    ).resolves.toBeUndefined();
 
     expect(initScripts).toHaveLength(1);
   });
@@ -306,8 +292,8 @@ describe("[CI] installPageHooks — entry point contributes its own hooks", () =
   });
 
   it("does not contribute hooks a subclass merely inherits", async () => {
-    // Matches how the registry detects overrides: `Object.hasOwn`, so an
-    // inherited `popupHandlers()` is not picked up.
+    // Overrides are detected with `Object.hasOwn`, so an inherited
+    // `popupHandlers()` is not picked up.
     class SubclassedEntry extends EntryWithPopups {}
     const { initScripts, page } = makeFakePage();
 
@@ -318,7 +304,7 @@ describe("[CI] installPageHooks — entry point contributes its own hooks", () =
 });
 
 describe("[CI] installPageHooks — explicit pageHooks contributors", () => {
-  it("installs popup hooks from a contributed class with no registry", async () => {
+  it("installs popup hooks from a contributed class", async () => {
     const { locatorHandlerTriggers, page } = makeFakePage();
 
     await new PlainEntry(page).install({ pageHooks: [PendoTourPage] });
@@ -381,16 +367,17 @@ describe("[CI] installPageHooks — skips, collisions and flow-owned objects", (
     ).rejects.toThrow('Duplicate popup hook name "cookie-banner"');
   });
 
-  it("merges registry, entry point, and contributed hooks together", async () => {
-    registerPage("RouteOnlyPage", RouteOnlyPage);
+  it("merges the entry point's own hooks with contributed ones", async () => {
     const { initScripts, locatorHandlerTriggers, page, routes } =
       makeFakePage();
 
-    await new EntryWithPopups(page).install({ pageHooks: [PendoTourPage] });
+    await new EntryWithPopups(page).install({
+      pageHooks: [PendoTourPage, RouteOnlyPage],
+    });
 
     expect(initScripts[0]).toContain("cookieconsent"); // entry point
     expect(locatorHandlerTriggers).toEqual([{ name: "pendo-tour" }]); // contributed
-    expect(routes).toEqual(["**/analytics/**"]); // registry
+    expect(routes).toEqual(["**/analytics/**"]); // contributed
   });
 
   it("registers contributed popups through a flow-owned PopupHandler", async () => {

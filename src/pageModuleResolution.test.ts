@@ -5,9 +5,8 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { Page } from "playwright";
 
-import { BasePageObject } from "./basePageObject.js";
+import { createPageForCaller } from "./basePageObject.js";
 import { importedSpecifier } from "./pageModuleResolution.js";
-import { createPageForCaller, registerPage } from "./pageRegistry.js";
 import { AnotherPage } from "./testFixtures/another-page.js";
 import { NestedPage } from "./testFixtures/nested/nested-page.js";
 
@@ -46,15 +45,6 @@ describe("[CI] create without register-pages.ts", () => {
 
     expect(first).not.toBe(second);
     expect(first.constructor).toBe(second.constructor);
-  });
-
-  it("prefers a registered page over anything the caller resolves to", async () => {
-    class RegisteredOverridePage extends BasePageObject {}
-    registerPage("OverridePage", RegisteredOverridePage);
-
-    const overridePage = await new AnotherPage(fakePage).createOverride();
-
-    expect(overridePage).toBeInstanceOf(RegisteredOverridePage);
   });
 
   it("says the caller lacks an import when an unimported name fails", async () => {

@@ -50,13 +50,6 @@ ruleTester.run(
         errors: typeOnlyImport,
       },
       {
-        // The free function shares the caller-source resolution.
-        code: `import { createPage } from "@qawolf/pom";
-          import type { CartPage } from "../cart/cart-page.ts";
-          async function openCart(tab: Page) { return createPage("CartPage", tab); }`,
-        errors: typeOnlyImport,
-      },
-      {
         // A default export binds by its local name.
         code: `import type CartPage from "../cart/cart-page.ts";
           ${pageObject(`async goToCart() { return this.create("CartPage"); }`)}`,
@@ -103,8 +96,8 @@ ruleTester.run(
           ${pageObject(`async goToCart() { return this.create("CartPage"); }`)}`,
       },
       {
-        // Only `this.create` and `createPage` resolve through the caller's
-        // source; another object's `create` is unrelated.
+        // Only `this.create` resolves through the caller's source; another
+        // object's `create` is unrelated.
         code: `import type { CartPage } from "../cart/cart-page.ts";
           ${pageObject(
             `async goToCart(factory: PageFactory) { return factory.create("CartPage"); }`,
