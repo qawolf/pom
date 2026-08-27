@@ -3,14 +3,21 @@ import type { Page } from "playwright";
 import { launch } from "@qawolf/flows/web";
 
 import { BasePageObject } from "./basePageObject.js";
-import {
-  getRegisteredPopupHandlers,
-  getRegisteredRouteInterceptors,
-} from "./pageHookCollection.js";
-import type { HookGroup } from "./pageHookCollection.js";
-import type { PageSetupOptions } from "./pageHooks.js";
+import { getRegisteredHookBearingClasses } from "./pageHookCollection.js";
+import type {
+  PageSetupOptions,
+  PopupHandlerDef,
+  RouteInterceptorDef,
+} from "./pageHooks.js";
 import type { PomClass, RegistrablePage } from "./pageRegistry.js";
 import { buildPopupShieldInitScript } from "./popupShieldInitScript.js";
+
+/** Hook defs of one kind, attributed to the declaring class's name so a
+ *  duplicate-name error can say which classes collided. */
+type HookGroup<TDef> = {
+  className: string;
+  defs: TDef[];
+};
 
 /**
  * Playwright applies HTTP auth when `httpCredentials` is set. Passing empty
@@ -114,18 +121,9 @@ export abstract class EntryPointPageObject extends BasePageObject {
     const skipPopups = new Set(options?.allowPopups);
     const skipRoutes = new Set(options?.allowRoutes);
 
-    const popupGroups = this.collectHookGroups({
-      explicit: options?.pageHooks,
-      kind: "popupHandlers",
-      read: (source) => source.popupHandlers(),
-      registryGroups: await getRegisteredPopupHandlers(this.page),
-    });
-    const routeGroups = this.collectHookGroups({
-      explicit: options?.pageHooks,
-      kind: "routeInterceptors",
-      read: (source) => source.routeInterceptors(),
-      registryGroups: await getRegisteredRouteInterceptors(this.page),
-    });
+    const { popupGroups, routeGroups } = await this.collectHookGroups(
+      options?.pageHooks,
+    );
     assertUniqueHookNames(popupGroups, "popup");
     assertUniqueHookNames(routeGroups, "route");
 
@@ -167,46 +165,68 @@ export abstract class EntryPointPageObject extends BasePageObject {
   }
 
   /**
-   * Hook groups from all three sources — the page registry, this entry point
-   * itself, and the classes named in `options.pageHooks` — with each class
-   * contributing exactly once however it was reached.
+   * Hook groups of both kinds from all three sources — the page registry, this
+   * entry point itself, and the classes named in `options.pageHooks` —
+   * collected in one pass so each class is constructed at most once, and
+   * contributes exactly once however it was reached.
    *
    * Dedupe is by class identity rather than by name because contributing
    * twice is not merely wasteful: the second contribution repeats every hook
-   * name and `assertUniqueHookNames` throws. An entry point that a workspace
-   * also registers is the common case, so identity is what keeps the registry
-   * and the two registry-free routes compatible with each other.
+   * name and `assertUniqueHookNames` throws. Identity is also the only
+   * reliable key — a registered name need not match `cls.name`, and one class
+   * can be registered under two names — so a registry alias, an entry point a
+   * workspace also registers, and a class both registered and named in
+   * `pageHooks` all collapse to a single contribution.
+   *
+   * Both kinds are read together because collecting them in separate passes
+   * would construct a class declaring both overrides twice, double-firing any
+   * side effect in its constructor.
    *
    * `Object.hasOwn` matches how the registry detects overrides, so a class
-   * that only inherits `popupHandlers()` contributes nothing here either.
+   * that only inherits `popupHandlers()` / `routeInterceptors()` contributes
+   * nothing of that kind here either.
    */
-  private collectHookGroups<TDef>({
-    explicit,
-    kind,
-    read,
-    registryGroups,
-  }: {
-    explicit: PomClass[] | undefined;
-    kind: "popupHandlers" | "routeInterceptors";
-    read: (source: RegistrablePage) => TDef[];
-    registryGroups: HookGroup<TDef>[];
-  }): HookGroup<TDef>[] {
-    const groups = [...registryGroups];
-    const seen = new Set<PomClass>(groups.map((group) => group.cls));
+  private async collectHookGroups(
+    contributors: PomClass[] | undefined,
+  ): Promise<{
+    popupGroups: HookGroup<PopupHandlerDef>[];
+    routeGroups: HookGroup<RouteInterceptorDef>[];
+  }> {
+    const popupGroups: HookGroup<PopupHandlerDef>[] = [];
+    const routeGroups: HookGroup<RouteInterceptorDef>[] = [];
+    const seen = new Set<PomClass>();
     // `this.constructor` is typed `Function`; at runtime it is the concrete
     // entry-point class, which carries `createFromPage`, `name` and `prototype`.
     const self = this.constructor as unknown as PomClass;
 
-    for (const cls of [self, ...(explicit ?? [])]) {
-      if (seen.has(cls) || !Object.hasOwn(cls.prototype, kind)) continue;
+    // Registry first, so a class reached both ways keeps the name it was
+    // registered under in any duplicate-name error.
+    const registered = await getRegisteredHookBearingClasses();
+    const candidates: { className: string; cls: PomClass }[] = [
+      ...registered.map(({ cls, name }) => ({ className: name, cls })),
+      { className: self.name, cls: self },
+      ...(contributors ?? []).map((cls) => ({ className: cls.name, cls })),
+    ];
+
+    for (const { className, cls } of candidates) {
+      if (seen.has(cls)) continue;
       seen.add(cls);
-      // `this` is already bound to the page, so only contributed classes are
-      // constructed.
-      const source = cls === self ? this : cls.createFromPage(this.page);
-      groups.push({ className: cls.name, cls, defs: read(source) });
+
+      const ownPopups = Object.hasOwn(cls.prototype, "popupHandlers");
+      const ownRoutes = Object.hasOwn(cls.prototype, "routeInterceptors");
+      if (!ownPopups && !ownRoutes) continue;
+
+      // `this` is already bound to the page, so only other classes are
+      // constructed — and each of those exactly once.
+      const source: RegistrablePage =
+        cls === self ? this : cls.createFromPage(this.page);
+      if (ownPopups)
+        popupGroups.push({ className, defs: source.popupHandlers() });
+      if (ownRoutes)
+        routeGroups.push({ className, defs: source.routeInterceptors() });
     }
 
-    return groups;
+    return { popupGroups, routeGroups };
   }
 }
 

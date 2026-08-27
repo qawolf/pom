@@ -444,3 +444,82 @@ describe("[CI] installPageHooks — skips, collisions and flow-owned objects", (
     expect(locatorHandlerTriggers).toHaveLength(1);
   });
 });
+
+describe("[CI] installPageHooks — each contributor is constructed once", () => {
+  it("constructs a contributed class owning both hook kinds exactly once", async () => {
+    // Collecting popups and routes in separate passes would run the
+    // constructor twice, double-firing any side effect a POM puts in it.
+    let constructions = 0;
+    class BothKindsPage extends BasePageObject {
+      constructor(page: Page) {
+        super(page);
+        constructions += 1;
+      }
+
+      override popupHandlers(): PopupHandlerDef[] {
+        return [popupDef("both-kinds-popup")];
+      }
+
+      override routeInterceptors(): RouteInterceptorDef[] {
+        return [routeDef("both-kinds-route", "**/both/**")];
+      }
+    }
+    const { page } = makeFakePage();
+
+    await new PlainEntry(page).install({ pageHooks: [BothKindsPage] });
+
+    expect(constructions).toBe(1);
+  });
+
+  it("constructs a registered class owning both hook kinds exactly once", async () => {
+    // Same defect reached through the registry: the per-kind collectors each
+    // build their own instance of a class that declares both overrides.
+    let constructions = 0;
+    class RegisteredBothKindsPage extends BasePageObject {
+      constructor(page: Page) {
+        super(page);
+        constructions += 1;
+      }
+
+      override popupHandlers(): PopupHandlerDef[] {
+        return [popupDef("registered-both-popup")];
+      }
+
+      override routeInterceptors(): RouteInterceptorDef[] {
+        return [routeDef("registered-both-route", "**/registered-both/**")];
+      }
+    }
+    registerPage("RegisteredBothKindsPage", RegisteredBothKindsPage);
+    const { page } = makeFakePage();
+
+    await new PlainEntry(page).install();
+
+    expect(constructions).toBe(1);
+  });
+});
+
+describe("[CI] installPageHooks — registry aliases", () => {
+  it("contributes once for a class registered under two names", async () => {
+    // Dedupe is by class identity, so reaching one class through two registry
+    // names must not repeat its hook names and trip the duplicate-name guard.
+    registerPage("PendoTourPage", PendoTourPage);
+    registerPage("PendoTourPageAlias", PendoTourPage);
+    const { locatorHandlerTriggers, page } = makeFakePage();
+
+    await expect(new PlainEntry(page).install()).resolves.toBeUndefined();
+
+    expect(locatorHandlerTriggers).toEqual([{ name: "pendo-tour" }]);
+  });
+
+  it("contributes once for a class registered twice and also contributed", async () => {
+    registerPage("RouteOnlyPage", RouteOnlyPage);
+    registerPage("RouteOnlyPageAlias", RouteOnlyPage);
+    const { page, routes } = makeFakePage();
+
+    await expect(
+      new PlainEntry(page).install({ pageHooks: [RouteOnlyPage] }),
+    ).resolves.toBeUndefined();
+
+    expect(routes).toEqual(["**/analytics/**"]);
+  });
+});

@@ -1,6 +1,12 @@
 /**
- * Page-hook collection — reads `popupHandlers()` / `routeInterceptors()` defs
- * off every registered POM for `EntryPointPageObject.installPageHooks`.
+ * Page-hook collection — resolves which registered POMs declare
+ * `popupHandlers()` / `routeInterceptors()`, and reads their defs.
+ *
+ * `EntryPointPageObject.installPageHooks` takes the classes
+ * (`getRegisteredHookBearingClasses`) rather than the per-kind groups, because
+ * it merges them with the entry point itself and with `pageHooks`
+ * contributors and must construct each class at most once. The per-kind
+ * collectors below stay for callers that ask the registry one kind at a time.
  *
  * Hook defs can only be read off a loaded class, so this loads every lazy
  * registry entry except those registered `{ providesPageHooks: false }`.
@@ -17,8 +23,12 @@ import {
 } from "./pageRegistry.js";
 import type { PomClass } from "./pageRegistry.js";
 
-async function resolveHookBearingClasses(): Promise<
-  { cls: PomClass; name: string }[]
+export type HookBearingClass = { cls: PomClass; name: string };
+
+/** Every registered class that directly declares either hook override, tagged
+ *  with the name it was registered under. */
+export async function getRegisteredHookBearingClasses(): Promise<
+  HookBearingClass[]
 > {
   const resolved = await Promise.all(
     Object.entries(entries).map(async ([name, entry]) => {
@@ -32,43 +42,26 @@ async function resolveHookBearingClasses(): Promise<
   return resolved.filter((entry) => entry !== undefined);
 }
 
-/**
- * A class's hook defs, tagged with the class itself.
- *
- * `cls` is what lets `installPageHooks` merge these groups with hooks the
- * entry point declares on itself and hooks contributed through
- * `PageSetupOptions.pageHooks`: a class reached by two routes must contribute
- * once, and identity is the only reliable key — two registrations can share a
- * class, and a registered name need not match `cls.name`.
- */
-export type HookGroup<TDef> = {
-  className: string;
-  cls: PomClass;
-  defs: TDef[];
-};
-
 export async function getRegisteredPopupHandlers(
   page: Page,
-): Promise<HookGroup<PopupHandlerDef>[]> {
-  const hookBearing = await resolveHookBearingClasses();
+): Promise<{ className: string; defs: PopupHandlerDef[] }[]> {
+  const hookBearing = await getRegisteredHookBearingClasses();
   return hookBearing
     .filter(({ cls }) => Object.hasOwn(cls.prototype, "popupHandlers"))
     .map(({ cls, name }) => ({
       className: name,
-      cls,
       defs: cls.createFromPage(page).popupHandlers(),
     }));
 }
 
 export async function getRegisteredRouteInterceptors(
   page: Page,
-): Promise<HookGroup<RouteInterceptorDef>[]> {
-  const hookBearing = await resolveHookBearingClasses();
+): Promise<{ className: string; defs: RouteInterceptorDef[] }[]> {
+  const hookBearing = await getRegisteredHookBearingClasses();
   return hookBearing
     .filter(({ cls }) => Object.hasOwn(cls.prototype, "routeInterceptors"))
     .map(({ cls, name }) => ({
       className: name,
-      cls,
       defs: cls.createFromPage(page).routeInterceptors(),
     }));
 }
