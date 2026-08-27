@@ -13,23 +13,31 @@ it("exposes each rule under its scoped id, with its severity", () => {
 // table means adding, renaming or re-grading a rule is a visible diff here.
 it("ships this rule set", () => {
   expect(pomRuleSeverities).toEqual({
+    "@qawolf/pom/aaa-banner-format": "warn",
     "@qawolf/pom/assert-expect-pairing": "error",
     "@qawolf/pom/entry-point-factory": "error",
+    "@qawolf/pom/file-naming-convention": "warn",
+    "@qawolf/pom/flow-export-structure": "error",
     "@qawolf/pom/locator-getter-shape": "error",
     "@qawolf/pom/no-any-shared-state": "error",
+    "@qawolf/pom/no-code-between-steps": "error",
     "@qawolf/pom/no-expect-in-flows": "warn",
     "@qawolf/pom/no-fetch-axios-in-flows": "error",
     "@qawolf/pom/no-inline-locator-in-page-object": "warn",
     "@qawolf/pom/no-legacy-selectors": "error",
     "@qawolf/pom/no-mutable-state-in-page-object": "warn",
+    "@qawolf/pom/no-non-null-assertion": "error",
     "@qawolf/pom/no-page-object-constructor": "error",
+    "@qawolf/pom/no-parameter-properties": "error",
     "@qawolf/pom/no-raw-page-in-flows": "error",
     "@qawolf/pom/no-selectors-in-flows": "error",
     "@qawolf/pom/no-wait-for-timeout": "error",
     "@qawolf/pom/prefer-web-first-assertion": "warn",
+    "@qawolf/pom/require-env-pattern": "error",
     "@qawolf/pom/require-locator-jsdoc": "warn",
     "@qawolf/pom/require-page-object-base-class": "warn",
     "@qawolf/pom/require-value-import-for-created-page": "error",
+    "@qawolf/pom/test-aaa-comments": "warn",
   });
   expect(Object.keys(pomRuleModules).sort()).toEqual(
     Object.keys(pomRuleSeverities).sort(),

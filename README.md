@@ -273,7 +273,8 @@ skipped:
 - A **flow** is a module that imports `flow` from `@qawolf/flows` (any subpath)
   or default-exports a `flow(...)` call. The `.flow.ts` name is not the signal.
 
-A file that is neither is not checked, except by the rules marked _anywhere_.
+A file that is neither is not checked, except by the rules marked _anywhere_
+and by `file-naming-convention`, whose subject is the path itself.
 
 ### The rules
 
@@ -303,6 +304,28 @@ Page objects:
 | `require-page-object-base-class`        | warn  | a class with a `locators` map that extends nothing                                |
 | `entry-point-factory`                   | error | an `EntryPointPageObject` subclass with no `static create()`                      |
 | `require-value-import-for-created-page` | error | `this.create("Name")` where `Name` is bound by a type-only import                 |
+
+Flow structure:
+
+| Rule                    | Level | Reports                                                                                         |
+| ----------------------- | ----- | ----------------------------------------------------------------------------------------------- |
+| `flow-export-structure` | error | a flow module without `export default flow(name, target, callback)`, or with a non-literal name |
+| `no-code-between-steps` | error | a statement after the first `await test(...)` that is not itself one                            |
+| `test-aaa-comments`     | warn  | a step with no Arrange / Act / Assert comment                                                   |
+| `aaa-banner-format`     | warn  | an Arrange / Act / Assert marker that is not the 32-dash three-line banner                      |
+
+Workspace conventions and TypeScript hygiene:
+
+| Rule                      | Level | Reports                                                                             |
+| ------------------------- | ----- | ----------------------------------------------------------------------------------- |
+| `require-env-pattern`     | error | `process.env.X` in a flow or page object, instead of the workspace's `requireEnv()` |
+| `file-naming-convention`  | warn  | a file under `src/` whose name is not kebab-case                                    |
+| `no-non-null-assertion`   | error | a postfix `!` — _anywhere_                                                          |
+| `no-parameter-properties` | error | `constructor(private x: T)` — _anywhere_                                            |
+
+`flow-export-structure` does not check the target's value: the platform serves
+its execution targets as a catalogue that changes without a release of this
+package, so any list here would go stale.
 
 `warn` marks a convention rather than a defect. A pre-commit hook that runs
 `eslint --max-warnings 0` turns warnings into blockers; if a workspace is not
@@ -335,13 +358,8 @@ Renamed on the way in:
 Not carried over: `no-this-page-in-property-initializers` (its premise is wrong
 — `this.page` is assigned by the base constructor before a subclass's field
 initializers run, so `private readonly locators = { … this.page … }` is fine
-and accepted by `no-inline-locator-in-page-object`); `no-non-null-assertion`
-and `no-parameter-properties` (general TypeScript hygiene —
-`@typescript-eslint/no-non-null-assertion` and `erasableSyntaxOnly` in
-`tsconfig.json` cover them); `require-env-pattern`, `file-naming-convention`,
-`flow-export-structure`, `no-code-between-steps`, `test-aaa-comments` and
-`aaa-banner-format` (QA Wolf workspace and flow-authoring conventions with no
-page-object content); and the injected-context migration guards
+and accepted by `no-inline-locator-in-page-object`); and the injected-context
+migration guards
 (`no-platform-context-injection`, `no-context-capabilities`,
 `no-context-helper`, `no-legacy-env-var`, `no-legacy-inbox`, `no-legacy-otp`,
 `no-wdio-injection`), which guard the `@qawolf/flows` API rather than this
