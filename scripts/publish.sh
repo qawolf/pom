@@ -8,7 +8,7 @@
 set -euo pipefail
 
 name=$(node -p "require('./package.json').name")
-version=$(node -p "require('./package.json').version")
+version=$(node -p "require('./package.json').version ?? ''")
 is_private=$(node -p "require('./package.json').private === true ? 'true' : 'false'")
 
 emit() {
