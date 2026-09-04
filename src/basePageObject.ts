@@ -19,7 +19,17 @@ export type BaselineScreenshotFn = (
  * `BasePageObject` identity, which are still perfectly good page objects.
  */
 export type PomClass = {
-  createFromPage(page: Page): object;
+  createFromPage(page: Page, options?: CreateOptions): object | Promise<object>;
+};
+
+/** How `createFromPage` and `create` construct a page object. */
+export type CreateOptions = {
+  /**
+   * Await the instance's `waitForReady` before handing it back, so the call
+   * that builds the next page does not resolve until that page is usable.
+   * Defaults to `true`; pass `false` to construct without waiting.
+   */
+  waitForReady?: boolean;
 };
 
 export abstract class BasePageObject {
@@ -31,13 +41,28 @@ export abstract class BasePageObject {
 
   /**
    * Factory used by `create`, and by a page object constructing a sibling it
-   * imported directly.
+   * imported directly. Awaits the new instance's `waitForReady` unless
+   * `options.waitForReady` is `false`.
    */
-  static createFromPage<TPageObject extends BasePageObject>(
+  static async createFromPage<TPageObject extends BasePageObject>(
     this: new (page: Page) => TPageObject,
     page: Page,
-  ): TPageObject {
-    return new this(page);
+    options: CreateOptions = {},
+  ): Promise<TPageObject> {
+    return BasePageObject.readyInstance(new this(page), options);
+  }
+
+  /**
+   * The instance, once its `waitForReady` has resolved — or at once when the
+   * caller opted out. Static so `create` can stay non-`async` (see the stack
+   * note there) while still returning a single promise.
+   */
+  private static async readyInstance<TPageObject extends BasePageObject>(
+    instance: TPageObject,
+    { waitForReady = true }: CreateOptions,
+  ): Promise<TPageObject> {
+    if (waitForReady) await instance.waitForReady();
+    return instance;
   }
 
   /**
@@ -66,25 +91,50 @@ export abstract class BasePageObject {
    * `this.create<NextPage>("NextPage")` — and otherwise defaults to
    * `BasePageObject`. Nothing checks that the generic and the name agree,
    * which is the other reason to prefer the class form.
+   *
+   * Either form awaits the sibling's `waitForReady` before resolving, so
+   * `return this.create(NextPage)` is the whole hand-off. Pass
+   * `{ waitForReady: false }` to skip it.
    */
   protected create<TPageObject extends BasePageObject>(
     PageClass: new (page: Page) => TPageObject,
+    options?: CreateOptions,
   ): Promise<TPageObject>;
   protected create<TPageObject extends BasePageObject = BasePageObject>(
     name: string,
+    options?: CreateOptions,
   ): Promise<TPageObject>;
   protected create(
     nameOrClass: string | (new (page: Page) => BasePageObject),
+    options: CreateOptions = {},
   ): Promise<BasePageObject> {
     // A class needs no lookup at all; only a name is resolved. Not `async`, so
     // the stack `callerFileUrl` reads below is the same as before.
     if (typeof nameOrClass === "function")
-      return Promise.resolve(new nameOrClass(this.page));
+      return BasePageObject.readyInstance(new nameOrClass(this.page), options);
 
     // Depth 1 is the page-object method that called `create`, whose imports
     // are what the name is resolved through.
-    return createPageForCaller(nameOrClass, this.page, callerFileUrl(1));
+    return createPageForCaller({
+      callerUrl: callerFileUrl(1),
+      name: nameOrClass,
+      options,
+      page: this.page,
+    });
   }
+
+  /**
+   * Resolves once this page object is usable: its first row rendered, its
+   * loading indicator gone, whatever "loaded" means for the page. `create`
+   * and `createFromPage` await it before handing the instance back, so the
+   * method that clicks into a page returns only once that page is ready and
+   * no caller has to remember a separate wait. The default resolves at once;
+   * override it on pages that need one.
+   *
+   * Runs against the instance before any other method does, so it should
+   * only observe the page — a wait, not an action.
+   */
+  protected async waitForReady(): Promise<void> {}
 }
 
 function isPomClass(value: unknown): value is PomClass {
@@ -181,13 +231,21 @@ async function resolvePageClass(
  * constructs it. `create` captures its own caller; tests exercise resolution
  * from a synthetic one.
  */
-export async function createPageForCaller(
-  name: string,
-  page: Page,
-  callerUrl: string | undefined,
-): Promise<BasePageObject> {
+export async function createPageForCaller({
+  callerUrl,
+  name,
+  options = {},
+  page,
+}: {
+  callerUrl: string | undefined;
+  name: string;
+  options?: CreateOptions;
+  page: Page;
+}): Promise<BasePageObject> {
   const cls = await resolvePageClass(name, callerUrl);
   // Trusted per `assertIsPomClass`: the resolved class builds page objects,
-  // even when it extends a duplicated copy of this base class.
-  return cls.createFromPage(page) as BasePageObject;
+  // even when it extends a duplicated copy of this base class. That copy may
+  // predate the async factory and return the instance directly, which the
+  // `await` absorbs.
+  return (await cls.createFromPage(page, options)) as BasePageObject;
 }

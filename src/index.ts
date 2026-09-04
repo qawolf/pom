@@ -1,4 +1,8 @@
-export { type BaselineScreenshotFn, BasePageObject } from "./basePageObject.js";
+export {
+  type BaselineScreenshotFn,
+  type CreateOptions,
+  BasePageObject,
+} from "./basePageObject.js";
 export {
   type ReportCleanupFailedParams,
   reportCleanupFailed,
