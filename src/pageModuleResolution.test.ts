@@ -65,11 +65,11 @@ describe("[CI] create without register-pages.ts", () => {
       'import { MissingPage } from "./missing-page.js";\n',
     );
 
-    const create = createPageForCaller(
-      "MissingPage",
-      fakePage,
-      pathToFileURL(callerPath).href,
-    );
+    const create = createPageForCaller({
+      callerUrl: pathToFileURL(callerPath).href,
+      name: "MissingPage",
+      page: fakePage,
+    });
 
     await expect(create).rejects.toThrow("Unknown page: MissingPage");
     await expect(create).rejects.toThrow(

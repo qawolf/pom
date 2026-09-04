@@ -118,6 +118,48 @@ code never holds a Playwright `Page`, so it cannot construct page objects
 directly. A flow gets its first POM from an entry point's static `create()`,
 and every subsequent one from methods on POMs it already has.
 
+### Waiting for a page to be ready
+
+On a slow page, the click that opens it resolves long before the page is
+usable. Override `waitForReady` to say what "loaded" means for that page — a
+first row rendered, a spinner gone — and `create` / `createFromPage` await it
+before handing the instance back. The method that navigates then returns a
+page that is ready to use, with no separate wait for its callers to remember:
+
+```ts
+export class ContractorsPage extends BasePageObject {
+  private get locators() {
+    return {
+      firstRow: this.page.getByRole("row").nth(1),
+      spinner: this.page.getByTestId("loading"),
+    } as const;
+  }
+
+  protected override async waitForReady() {
+    await this.locators.spinner.waitFor({ state: "hidden" });
+    await this.locators.firstRow.waitFor();
+  }
+}
+
+export class MainNav extends SubPageObject<AppShell> {
+  async openContractors() {
+    await this.locators.contractorsLink.click();
+    return this.create(ContractorsPage);
+  }
+}
+```
+
+The default `waitForReady` resolves at once, so pages without one behave as
+before. It runs before any other method on the new instance, so keep it to
+observing the page rather than acting on it. To construct a page without
+waiting — the page object is needed before the page has finished loading, say
+to assert on the loading state itself — pass `{ waitForReady: false }` to
+either `create` or `createFromPage`.
+
+An entry point's static `create()` builds its first page with `new this(page)`
+and so does not wait on its own; add `await instance.waitForReady()` there
+after the `goto` or sign-in if the first page needs one.
+
 ### Page hooks
 
 An entry point declares the popups to dismiss and the routes to intercept on
