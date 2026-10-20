@@ -1,4 +1,4 @@
-import { describe, expect, it, jest } from "@jest/globals";
+import { afterEach, describe, expect, it, jest } from "@jest/globals";
 import type {
   Browser,
   BrowserContext,
@@ -267,6 +267,70 @@ describe("[CI] EntryPointPageObject browser launch", () => {
     const firstPage = events.indexOf("newPage");
     expect(firstPage).toBeGreaterThan(events.indexOf("addInitScript"));
     expect(firstPage).toBeGreaterThan(events.indexOf("route"));
+  });
+});
+
+describe("[CI] initializeBrowser — extra HTTP header from env", () => {
+  const originalEnv = { ...process.env };
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
+  });
+
+  it("sends nothing extra when only one of the two env vars is set", async () => {
+    makeFakeContext();
+    delete process.env.EXTRA_HTTP_HEADER_NAME;
+    process.env.EXTRA_HTTP_HEADER_VALUE = "some-token";
+
+    await PlainEntry.create();
+
+    const launched = launch.mock.calls[0]?.[0] as
+      { extraHTTPHeaders?: Record<string, string> } | undefined;
+    expect(launched?.extraHTTPHeaders).toBeUndefined();
+  });
+
+  it("adds the header named by EXTRA_HTTP_HEADER_NAME when both are set", async () => {
+    makeFakeContext();
+    process.env.EXTRA_HTTP_HEADER_NAME = "X-Gym-Auth";
+    process.env.EXTRA_HTTP_HEADER_VALUE = "dGVzdGVyOnMzY3JldA==";
+
+    await PlainEntry.create();
+
+    expect(launch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        extraHTTPHeaders: { "X-Gym-Auth": "dGVzdGVyOnMzY3JldA==" },
+      }),
+    );
+  });
+
+  it("merges with, rather than replaces, a flow's own extraHTTPHeaders", async () => {
+    makeFakeContext();
+    process.env.EXTRA_HTTP_HEADER_NAME = "X-Gym-Auth";
+    process.env.EXTRA_HTTP_HEADER_VALUE = "token";
+
+    await PlainEntry.create({ extraHTTPHeaders: { "app-shell": "true" } });
+
+    expect(launch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        extraHTTPHeaders: { "app-shell": "true", "X-Gym-Auth": "token" },
+      }),
+    );
+  });
+
+  it("lets the flow's own header of the same name win", async () => {
+    makeFakeContext();
+    process.env.EXTRA_HTTP_HEADER_NAME = "X-Gym-Auth";
+    process.env.EXTRA_HTTP_HEADER_VALUE = "env-token";
+
+    await PlainEntry.create({
+      extraHTTPHeaders: { "X-Gym-Auth": "flow-token" },
+    });
+
+    expect(launch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        extraHTTPHeaders: { "X-Gym-Auth": "flow-token" },
+      }),
+    );
   });
 });
 

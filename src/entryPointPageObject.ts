@@ -28,6 +28,22 @@ function optionalHttpCredentialsFromEnv():
 }
 
 /**
+ * A single extra request header from the environment, for sites gated by a
+ * custom auth header instead of HTTP Basic auth (which occupies
+ * `Authorization` — not an option when the site under test needs that
+ * header for its own auth). Only applied when both `EXTRA_HTTP_HEADER_NAME`
+ * and `EXTRA_HTTP_HEADER_VALUE` are non-empty, for the same reason empty
+ * `AUTH_USERNAME`/`AUTH_PASSWORD` above are skipped rather than sent empty.
+ */
+function optionalExtraHttpHeaderFromEnv(): Record<string, string> | undefined {
+  const name = process.env.EXTRA_HTTP_HEADER_NAME;
+  const value = process.env.EXTRA_HTTP_HEADER_VALUE;
+  if (name && value) return { [name]: value };
+
+  return undefined;
+}
+
+/**
  * Names are unique within one source so that `allowPopups` / `allowRoutes`
  * and same-name replacement are unambiguous. Across sources a repeat is
  * deliberate: the flow's hook replaces the declared one.
@@ -163,9 +179,18 @@ export abstract class EntryPointPageObject extends BasePageObject {
       kind: "route",
     });
 
+    const extraHttpHeaderFromEnv = optionalExtraHttpHeaderFromEnv();
     const launchResult = await launch({
       ...launchOptions,
       ...optionalHttpCredentialsFromEnv(),
+      ...(extraHttpHeaderFromEnv
+        ? {
+            extraHTTPHeaders: {
+              ...extraHttpHeaderFromEnv,
+              ...launchOptions.extraHTTPHeaders,
+            },
+          }
+        : {}),
     });
 
     if (!("browser" in launchResult))
