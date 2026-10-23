@@ -130,10 +130,10 @@ function unknownPageError(
 
   if (tried.length === 0) {
     return Error(
-      `Unknown page: ${name}. ${callerUrl} has no import that binds it, ` +
-        `which is how a name is resolved. Add a value import of the class ` +
-        `in that file (a type-only import is erased by compilation and ` +
-        `cannot be followed), ${passTheClass}.`,
+      `Unknown page: ${name}. ${callerUrl} has no relative or absolute ` +
+        `value import of it, which is how a name is resolved. Import it by ` +
+        `a relative path (a type-only import is erased by compilation, and ` +
+        `an alias or package import cannot be followed), ${passTheClass}.`,
     );
   }
 
