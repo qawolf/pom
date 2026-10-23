@@ -32,7 +32,9 @@ describe("[CI] create without register-pages.ts", () => {
     const create = new AnotherPage(fakePage).goToUnimported();
 
     await expect(create).rejects.toThrow("Unknown page: SomePage");
-    await expect(create).rejects.toThrow("no import that binds it");
+    await expect(create).rejects.toThrow(
+      "no relative or absolute value import of it",
+    );
   });
 
   it("resolves once and reuses the class", async () => {
@@ -51,7 +53,9 @@ describe("[CI] create without register-pages.ts", () => {
     const create = new AnotherPage(fakePage).createMissingPage();
 
     await expect(create).rejects.toThrow("Unknown page: NoSuchPage");
-    await expect(create).rejects.toThrow("no import that binds it");
+    await expect(create).rejects.toThrow(
+      "no relative or absolute value import of it",
+    );
     await expect(create).rejects.toThrow("testFixtures/another-page.ts");
   });
 
@@ -74,6 +78,26 @@ describe("[CI] create without register-pages.ts", () => {
     await expect(create).rejects.toThrow("Unknown page: MissingPage");
     await expect(create).rejects.toThrow(
       '"./missing-page.js", "./missing-page.ts"',
+    );
+  });
+
+  it("does not claim an alias-imported name is unimported", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "pom-resolution-"));
+    const callerPath = join(directory, "caller.ts");
+    await writeFile(
+      callerPath,
+      'import { CheckoutPage } from "@pages/checkout";\n',
+    );
+
+    const create = createPageForCaller(
+      "CheckoutPage",
+      fakePage,
+      pathToFileURL(callerPath).href,
+    );
+
+    await expect(create).rejects.toThrow("Unknown page: CheckoutPage");
+    await expect(create).rejects.toThrow(
+      "no relative or absolute value import of it",
     );
   });
 });
